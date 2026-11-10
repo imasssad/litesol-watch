@@ -19,7 +19,7 @@ from app.models.schemas import Quote  # noqa: E402
 
 @pytest.fixture
 def quote():
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
 
     def _make(venue: str, bid: float, ask: float, ts: datetime | None = None) -> Quote:
         return Quote(

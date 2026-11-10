@@ -66,12 +66,14 @@ DEX_VENUE=mock
 MIN_NET_SPREAD_BPS=1
 ```
 
-### Tests
+### Tests, lint, types
 
 ```bash
 cd backend
 pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest        # 53 tests
+ruff check app tests    # lint (config in backend/ruff.toml)
+mypy app --ignore-missing-imports
 ```
 
 ## Docker
@@ -124,7 +126,15 @@ BINANCE_API_KEY=
 BINANCE_API_SECRET=
 SOLANA_RPC_URL=
 SOLANA_WALLET_PUBLIC_KEY=
+JUPITER_API_KEY=
 ```
+
+Note on Jupiter: the original default, `quote-api.jup.ag/v6`, was retired on
+2025-10-01. The default is now the keyless `lite-api.jup.ag/swap/v1/quote`
+(~60 req/min free tier — at `SCAN_INTERVAL_SECONDS=2` the scanner's two quote
+calls per scan sit exactly at that limit, so slow the scan or get a key from
+portal.jup.ag and switch to `api.jup.ag`). The new endpoint has not been
+exercised against the live API from this environment: NEEDS LIVE VALIDATION.
 
 ## Strategy
 
@@ -136,6 +146,9 @@ The bot uses a prefunded inventory model:
 - Requote and fully re-price both legs immediately before firing
 - Stop on failures, stale quotes, max loss, or manual kill switch
 - Halt and flag for manual reconciliation if one leg fills and the other does not
+- Persist the kill switch across restarts and recompute today's realized live
+  PnL from the trades table at startup, so a reboot cannot reset the day's loss
+  or silently release a tripped kill switch
 
 This is safer than relying on immediate cross-venue withdrawals/bridges.
 

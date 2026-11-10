@@ -43,6 +43,7 @@ def require_auth(x_api_token: str | None = Header(default=None)) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await scanner.restore_state()
     if not settings.auth_configured:
         logger.warning(
             "API_AUTH_TOKEN is unset or still the placeholder: control endpoints "
@@ -133,10 +134,12 @@ async def stop():
 @app.post("/api/kill-switch/on", dependencies=[Depends(require_auth)])
 async def kill_switch_on():
     scanner.risk.enable_kill_switch("manual via API")
+    await scanner.sync_risk_state()
     return {"kill_switch": scanner.risk.kill_switch}
 
 
 @app.post("/api/kill-switch/off", dependencies=[Depends(require_auth)])
 async def kill_switch_off():
     scanner.risk.disable_kill_switch()
+    await scanner.sync_risk_state()
     return {"kill_switch": scanner.risk.kill_switch}

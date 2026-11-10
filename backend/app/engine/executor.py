@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from app.config import settings
 from app.engine.pricing import reprice
@@ -63,6 +63,8 @@ class TradeExecutor:
         # Prefunded inventory model: execute both legs concurrently. return_exceptions
         # keeps a throwing leg from cancelling the sibling task mid-flight and losing
         # the record of a leg that may already have filled.
+        buy_res: OrderResult | BaseException
+        sell_res: OrderResult | BaseException
         buy_res, sell_res = await asyncio.gather(
             buy_connector.market_order(opportunity.pair, Side.buy, size),
             sell_connector.market_order(opportunity.pair, Side.sell, size),
@@ -82,6 +84,7 @@ class TradeExecutor:
             # an unhedged position. Stop trading and surface it loudly instead of
             # logging a generic failure.
             filled = sell_res if buy_failed else buy_res
+            assert isinstance(filled, OrderResult)
             failed_side = "buy" if buy_failed else "sell"
             error = (
                 f"UNHEDGED POSITION: {failed_side} leg failed after the other leg "
@@ -100,6 +103,7 @@ class TradeExecutor:
                 }
             )
 
+        assert isinstance(buy_res, OrderResult) and isinstance(sell_res, OrderResult)
         return self._filled(opportunity, mode, buy_res, sell_res)
 
     def _filled(

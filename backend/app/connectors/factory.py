@@ -1,6 +1,6 @@
 from app.config import settings
-from app.connectors.bingx_spot import BingXSpotConnector
 from app.connectors.binance_spot import BinanceSpotConnector
+from app.connectors.bingx_spot import BingXSpotConnector
 from app.connectors.jupiter import JupiterConnector
 from app.connectors.mexc_spot import MexcSpotConnector
 from app.connectors.mock_cex import MockCexConnector

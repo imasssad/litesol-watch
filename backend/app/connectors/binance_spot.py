@@ -3,7 +3,7 @@ import hmac
 import logging
 import math
 import time
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -26,6 +26,8 @@ class BinanceSpotConnector(ExecutionConnector):
         )
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=5.0)
         self._filters: dict | None = None
+        self._time_offset_ms: int | None = None
+        self._time_synced_at: float = 0.0
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -40,7 +42,7 @@ class BinanceSpotConnector(ExecutionConnector):
                 "ok": r.status_code == 200,
                 "status_code": r.status_code,
             }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - health must never raise
             return {"venue": self.venue, "ok": False, "error": str(exc)}
 
     async def get_quote(self, pair: str) -> Quote:
@@ -93,6 +95,34 @@ class BinanceSpotConnector(ExecutionConnector):
         decimals = max(0, -math.floor(math.log10(step)) if step < 1 else 0)
         return rounded, f"{rounded:.{decimals}f}"
 
+    async def _timestamp_ms(self) -> int:
+        """Order timestamp pinned to Binance server time.
+
+        Signing with the local clock means any skew beyond recvWindow rejects
+        every order with -1021. The offset is refreshed every 30 minutes; if
+        the sync call fails we fall back to the local clock and retry in ~5
+        minutes rather than refusing to trade on a healthy clock.
+        """
+        now = time.time()
+        if self._time_offset_ms is None or now - self._time_synced_at > 1800:
+            try:
+                r = await self.client.get("/api/v3/time")
+                r.raise_for_status()
+                server_ms = int(r.json()["serverTime"])
+                self._time_offset_ms = server_ms - int(time.time() * 1000)
+                self._time_synced_at = now
+                if abs(self._time_offset_ms) > 1000:
+                    logger.warning(
+                        "local clock is %+d ms from Binance server time",
+                        -self._time_offset_ms,
+                    )
+            except Exception:  # noqa: BLE001 - degrade to local clock, retry soon
+                logger.warning("Binance time sync failed; using local clock")
+                if self._time_offset_ms is None:
+                    self._time_offset_ms = 0
+                self._time_synced_at = now - 1500  # retry in ~5 minutes
+        return int(time.time() * 1000) + self._time_offset_ms
+
     async def market_order(
         self, pair: str, side: Side, quote_size_usd: float
     ) -> OrderResult:
@@ -108,7 +138,7 @@ class BinanceSpotConnector(ExecutionConnector):
             "type": "MARKET",
             "newOrderRespType": "FULL",
             "recvWindow": settings.binance_recv_window_ms,
-            "timestamp": int(time.time() * 1000),
+            "timestamp": await self._timestamp_ms(),
         }
 
         if side == Side.buy:

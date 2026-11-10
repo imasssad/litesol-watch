@@ -1,0 +1,12 @@
+{
+  "name": "litesol-watch-web-app",
+  "private": true,
+  "type": "module",
+  "description": "Unit tests for the pure logic of the (unbuilt) Solana DEX bot prototype. The .jsx itself has no build here - see README.md.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^5.1.0"
+  }
+}

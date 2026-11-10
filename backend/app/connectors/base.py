@@ -15,7 +15,7 @@ class MarketConnector(ABC):
 
     async def aclose(self) -> None:
         """Release any network resources. Overridden where sockets are held."""
-        return None
+        return
 
 
 class ExecutionConnector(MarketConnector):

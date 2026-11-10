@@ -1,12 +1,10 @@
-fastapi==0.115.8
-uvicorn[standard]==0.34.0
-pydantic==2.10.6
-pydantic-settings==2.7.1
-python-dotenv==1.0.1
+fastapi==0.162.2
+uvicorn[standard]==0.54.0
+pydantic==2.14.3
+pydantic-settings==2.16.2
+python-dotenv==1.2.4
 httpx==0.28.1
-SQLAlchemy==2.0.38
-aiosqlite==0.21.0
-python-multipart==0.0.20
-orjson==3.10.15
+SQLAlchemy==2.1.8
+aiosqlite==0.22.1
 
-ccxt==4.4.95
+ccxt==4.5.92

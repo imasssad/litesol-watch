@@ -4,7 +4,7 @@ The executor must recompute the spread from fresh quotes before it fires, so the
 calculation lives here rather than being inlined in the scanner.
 """
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from app.config import settings
 from app.models.schemas import Opportunity, Quote

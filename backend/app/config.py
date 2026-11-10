@@ -51,8 +51,12 @@ class Settings(BaseSettings):
 
     dex_venue: str = "jupiter"
     dex_fee_bps: float = 5
-    jupiter_quote_url: str = "https://quote-api.jup.ag/v6/quote"
-    jupiter_swap_url: str = "https://quote-api.jup.ag/v6/swap"
+    # quote-api.jup.ag/v6 was retired on 2025-10-01. The keyless lite-api host
+    # is rate-limited (~60 req/min free tier); with a key from portal.jup.ag,
+    # set JUPITER_API_KEY and point these at https://api.jup.ag/swap/v1/...
+    jupiter_quote_url: str = "https://lite-api.jup.ag/swap/v1/quote"
+    jupiter_swap_url: str = "https://lite-api.jup.ag/swap/v1/swap"
+    jupiter_api_key: str = ""
     solana_rpc_url: str = ""
     solana_wallet_public_key: str = ""
     solana_private_key_base64: str = ""

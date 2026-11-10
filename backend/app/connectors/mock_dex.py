@@ -1,5 +1,5 @@
 import random
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from app.connectors.base import ExecutionConnector
 from app.models.schemas import OrderResult, Quote, Side

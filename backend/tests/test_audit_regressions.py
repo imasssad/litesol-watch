@@ -3,7 +3,7 @@
 Every test here fails against the code as it was uploaded.
 """
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -12,7 +12,6 @@ from app.config import PLACEHOLDER_API_TOKEN, Settings
 from app.engine.pricing import build_opportunity, reprice
 from app.engine.risk import RiskEngine
 from app.main import FRONTEND_DIR, require_auth
-
 
 # --- 1. the dashboard path, which stopped the app from booting at all ---------
 

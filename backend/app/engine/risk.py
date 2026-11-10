@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from app.config import settings
 from app.models.schemas import Opportunity, Quote
@@ -45,6 +45,25 @@ class RiskEngine:
         if self.failed_trade_count >= settings.max_consecutive_failures:
             self.enable_kill_switch(
                 f"{self.failed_trade_count} consecutive failures (last: {reason})"
+            )
+
+    def restore(
+        self, kill_switch: bool, reason: str | None, daily_pnl_usd: float
+    ) -> None:
+        """Seed the engine from persisted state after a restart.
+
+        The daily PnL is recomputed from the trades table rather than trusted
+        from a snapshot, and a loss already past the limit re-engages the kill
+        switch instead of letting a reboot reset the day.
+        """
+        self.daily_pnl_usd = daily_pnl_usd
+        if kill_switch:
+            self.kill_switch = True
+            self.kill_switch_reason = reason or "restored from persisted state"
+            logger.warning("kill switch restored from persisted state: %s", reason)
+        if daily_pnl_usd <= -abs(settings.max_daily_loss_usd):
+            self.enable_kill_switch(
+                f"daily loss limit already hit before restart (pnl={daily_pnl_usd:.2f} USD)"
             )
 
     def record_success(self) -> None:

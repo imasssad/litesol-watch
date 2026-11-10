@@ -23,6 +23,14 @@ import { ConnectionProvider, WalletProvider, useWallet } from "@solana/wallet-ad
 import { WalletModalProvider, WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { VersionedTransaction, Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import "@solana/wallet-adapter-react-ui/styles.css";
+import {
+  assertWithinLiveCap,
+  bytesToBase64,
+  exitReason,
+  getTxFromOrder,
+  tokensToBaseUnits,
+  usdToUsdcBaseUnits,
+} from "./lib.mjs";
 
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -34,6 +42,11 @@ const JUPITER_SWAP_V2 = "https://api.jup.ag/swap/v2";
 // orders and then manage them against made-up numbers. Do not flip this to true
 // without first reconciling positions from on-chain fills.
 const LIVE_MODE_SUPPORTED = false;
+
+// Hard per-trade ceiling for live execution, independent of per-pair maxUsd.
+// assertWithinLiveCap() throws above this; it is enforced in executeJupiterSwap
+// so no UI state can bypass it.
+const MAX_LIVE_TRADE_USD = 10;
 
 const DEFAULT_PAIRS = [
   { id: 1, name: "PAIR 1", mint: "TOKEN_MINT_1_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_1_REPLACE", decimals: 6, price: 0.042, maxUsd: 25, takeProfit: 20, stopLoss: 8, trailingStop: 6, slippageBps: 150, enabled: true },
@@ -63,32 +76,6 @@ function isValidMint(value) {
   } catch {
     return false;
   }
-}
-
-function usdToUsdcBaseUnits(usd) {
-  return Math.floor(Number(usd) * 1_000_000).toString();
-}
-
-// A token amount is in human units; the Jupiter API wants base units. Sending
-// Math.floor(tokenAmount) treated 595.2 tokens as 595 base units, i.e. 0.000595
-// of a 6-decimal token - a sell ~10^6 times too small.
-function tokensToBaseUnits(amount, decimals = 6) {
-  return Math.floor(Number(amount) * 10 ** decimals).toString();
-}
-
-// Chunked so a large transaction cannot blow the argument limit the way
-// String.fromCharCode(...bytes) does on a big spread.
-function bytesToBase64(bytes) {
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-function getTxFromOrder(order) {
-  return order?.transaction || order?.swapTransaction || order?.tx || order?.serializedTransaction;
 }
 
 async function jupiterOrder({ inputMint, outputMint, amount, taker, slippageBps }) {
@@ -182,6 +169,7 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
     if (!connected || !publicKey || !signTransaction) throw new Error("Connect a Solana wallet first.");
     if (!isValidMint(pair.outputMint) || !isValidMint(pair.inputMint)) throw new Error(`${pair.name}: replace placeholder mint addresses first.`);
 
+    if (side === "BUY") assertWithinLiveCap(usdAmount, MAX_LIVE_TRADE_USD);
     const inputMint = side === "BUY" ? pair.inputMint : pair.outputMint;
     const outputMint = side === "BUY" ? pair.outputMint : pair.inputMint;
     const amount =
@@ -303,12 +291,16 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
       return;
     }
 
-    const changePct = ((pair.price - pos.entryPrice) / pos.entryPrice) * 100;
-    const trailingDrop = ((pos.highestPrice - pair.price) / pos.highestPrice) * 100;
     if (pair.price > pos.highestPrice) setPositions((prev) => ({ ...prev, [pair.id]: { ...pos, highestPrice: pair.price } }));
-    if (changePct >= pair.takeProfit) sell(pair, "take profit");
-    else if (changePct <= -pair.stopLoss) sell(pair, "stop loss");
-    else if (trailingDrop >= pair.trailingStop && changePct > 0) sell(pair, "trailing stop");
+    const reason = exitReason({
+      price: pair.price,
+      entryPrice: pos.entryPrice,
+      highestPrice: pos.highestPrice,
+      takeProfit: pair.takeProfit,
+      stopLoss: pair.stopLoss,
+      trailingStop: pair.trailingStop,
+    });
+    if (reason) sell(pair, reason);
   }
 
   useEffect(() => {
@@ -388,7 +380,16 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
                       type="checkbox"
                       checked={liveMode}
                       disabled={!LIVE_MODE_SUPPORTED}
-                      onChange={(e) => setLiveMode(e.target.checked)}
+                      onChange={(e) => {
+                        if (!e.target.checked) return setLiveMode(false);
+                        const ok = window.confirm(
+                          "Enable LIVE mode?\n\nThis signs and submits real, irreversible " +
+                            "mainnet swaps with the connected wallet. Hard cap: $" +
+                            MAX_LIVE_TRADE_USD +
+                            " per trade. Continue?"
+                        );
+                        setLiveMode(ok);
+                      }}
                     />{" "}
                     {LIVE_MODE_SUPPORTED ? "Live mode" : "Live mode (disabled - see README)"}
                   </label>

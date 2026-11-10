@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 import ccxt.async_support as ccxt
@@ -62,7 +62,7 @@ class CcxtSpotConnector(ExecutionConnector):
         try:
             await self.exchange.fetch_time()
             return {"venue": self.venue, "ok": True}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - health must never raise
             return {"venue": self.venue, "ok": False, "error": str(exc)}
 
     async def _load_markets(self) -> dict:

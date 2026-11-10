@@ -1,8 +1,8 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.db.models import OpportunityRow, TradeRow
+from app.db.models import BotStateRow, OpportunityRow, TradeRow
 from app.db.session import AsyncSessionLocal
 from app.models.schemas import Opportunity, TradeRecord
 
@@ -55,3 +55,36 @@ async def recent_trades(limit: int = 50) -> list[TradeRecord]:
         return [
             TradeRecord.model_validate(_row_to_dict(r, TradeRow.__table__)) for r in rows
         ]
+
+
+async def save_bot_state(kill_switch: bool, reason: str | None) -> None:
+    """Upsert the single persisted operational-state row (id=1)."""
+    async with AsyncSessionLocal() as session:
+        row = await session.get(BotStateRow, 1)
+        if row is None:
+            row = BotStateRow(id=1)
+            session.add(row)
+        row.kill_switch = kill_switch
+        row.kill_switch_reason = reason
+        row.updated_at = datetime.now(UTC)
+        await session.commit()
+
+
+async def load_bot_state() -> BotStateRow | None:
+    async with AsyncSessionLocal() as session:
+        return await session.get(BotStateRow, 1)
+
+
+async def realized_pnl_since(start: datetime) -> float:
+    """Sum of realized live PnL since `start` (UTC). Paper trades do not count."""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(func.coalesce(func.sum(TradeRow.realized_profit_usd), 0.0)).where(
+                TradeRow.ts >= start,
+                TradeRow.mode == "live",
+                TradeRow.realized_profit_usd.is_not(None),
+            )
+        )
+        return float(result.scalar_one() or 0.0)

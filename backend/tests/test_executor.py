@@ -1,6 +1,6 @@
 """Executor behaviour, in particular what happens when one leg fails."""
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 

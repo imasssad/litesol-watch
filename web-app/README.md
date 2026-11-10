@@ -49,13 +49,42 @@ Re-enabling live mode is not a matter of flipping the constant. It requires:
   `buy`/`sell` before it is set;
 - reconciliation for a swap that is submitted but never confirms.
 
-## Other defects fixed in this file
+## Defects fixed in this file
 
 | Issue | Fix |
 | --- | --- |
-| The sell leg passed a human-readable token amount where Jupiter expects base units (`String(Math.floor(tokenAmount))`), making every sell ~10^decimals too small | Added `tokensToBaseUnits()` and a `decimals` field per pair |
-| `btoa(String.fromCharCode(...signedTx.serialize()))` spreads the whole byte array as function arguments and throws on a large transaction | Replaced with chunked `bytesToBase64()` |
+| The sell leg passed a human-readable token amount where Jupiter expects base units (`String(Math.floor(tokenAmount))`), making every sell ~10^decimals too small | `tokensToBaseUnits()` in `lib.mjs` plus a `decimals` field per pair |
+| `btoa(String.fromCharCode(...signedTx.serialize()))` spreads the whole byte array as function arguments and throws on a large transaction | Chunked `bytesToBase64()` in `lib.mjs` |
 | `sweepProfitSol()` transferred a hardcoded 0.001 SOL but returned the *intended* USD sweep amount, so the books recorded a sweep that never happened | Returns `0` and logs that it is a stub |
+| No per-trade ceiling existed beyond each pair's editable `maxUsd` | `assertWithinLiveCap()` enforces a hard `MAX_LIVE_TRADE_USD = 10` at the swap entry point; it throws rather than clamping |
+| Live mode was a bare checkbox | Enabling it (were `LIVE_MODE_SUPPORTED` ever flipped) now requires an explicit `window.confirm` naming the cap; the checkbox stays disabled regardless |
+
+## Tests
+
+The pure trading logic (unit conversion, base64, the TP/SL/trailing-stop
+decision, the live cap) was extracted into `lib.mjs`, which the component
+imports — so the tested code is the shipped code. Run them with:
+
+```bash
+cd web-app
+npm install
+npm test        # vitest, 16 tests; npm audit is clean
+```
+
+The TP/SL/trailing logic in `evaluate()` now routes through `exitReason()` from
+`lib.mjs`. The remaining React-level hazards (stale closures over `positions`
+in the `useEffect` that calls `evaluate`, and `busyPair` being one global value
+rather than per-pair) are documented above and only matter if live mode is ever
+rebuilt; in simulation they can at worst double-log a simulated sell.
+
+## Endpoint status (checked November 2026)
+
+`https://api.jup.ag/swap/v2` with `GET /order` + `POST /execute` is the
+*current* Jupiter API — it superseded Ultra v1, and the response fields this
+file reads (`transaction`, `requestId`, then `signedTransaction` to
+`/execute`) match the current shape. Keyless access to `api.jup.ag` is heavily
+rate-limited; production use needs a portal.jup.ag key in `x-api-key`.
+Unverified against the live API from this environment: NEEDS LIVE VALIDATION.
 
 ## Relationship to the rest of the repository
 

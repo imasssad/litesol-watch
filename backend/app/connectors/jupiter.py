@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import httpx
 
@@ -22,7 +22,12 @@ class JupiterConnector(ExecutionConnector):
     venue = "Jupiter"
 
     def __init__(self) -> None:
-        self.client = httpx.AsyncClient(timeout=8.0)
+        headers = {}
+        if settings.jupiter_api_key:
+            # portal.jup.ag keys go in x-api-key (api.jup.ag host). The keyless
+            # lite-api host ignores the header.
+            headers["x-api-key"] = settings.jupiter_api_key
+        self.client = httpx.AsyncClient(timeout=8.0, headers=headers)
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -42,7 +47,7 @@ class JupiterConnector(ExecutionConnector):
         try:
             await self.get_quote(settings.pair)
             return {"venue": self.venue, "ok": True}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - health must never raise
             return {"venue": self.venue, "ok": False, "error": str(exc)}
 
     async def get_quote(self, pair: str) -> Quote:
@@ -57,7 +62,7 @@ class JupiterConnector(ExecutionConnector):
             raise RuntimeError(f"trade size {size_usd} is too small to quote")
 
         # Quote quote->base to infer the base ask, then base->quote for the bid.
-        buy_params = {
+        buy_params: dict[str, str | int] = {
             "inputMint": quote_mint,
             "outputMint": base_mint,
             "amount": amount,
@@ -72,7 +77,7 @@ class JupiterConnector(ExecutionConnector):
         ask = size_usd / out_base
 
         base_amount = int(out_base * (10**base_dec))
-        sell_params = {
+        sell_params: dict[str, str | int] = {
             "inputMint": base_mint,
             "outputMint": quote_mint,
             "amount": base_amount,

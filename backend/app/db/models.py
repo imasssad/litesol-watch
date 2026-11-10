@@ -1,6 +1,7 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
+
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Float, Integer, String, DateTime, Boolean, Text
 
 
 class Base(DeclarativeBase):
@@ -46,3 +47,19 @@ class TradeRow(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     buy_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     sell_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
+class BotStateRow(Base):
+    """Single-row (id=1) operational state that must survive a restart.
+
+    Without it, a restart silently released the kill switch and forgot the
+    day's realized loss.
+    """
+
+    __tablename__ = "bot_state"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kill_switch: Mapped[bool] = mapped_column(Boolean, default=False)
+    kill_switch_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

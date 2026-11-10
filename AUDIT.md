@@ -297,7 +297,7 @@ now holding exception text — widened to `Text`.
 
 ## Verification
 
-A regression suite was added at `backend/tests/` — 44 tests, one or more per
+A regression suite was added at `backend/tests/` — 53 tests, one or more per
 finding above. Each fails against the uploaded code.
 
 ```bash
@@ -308,13 +308,69 @@ python -m pytest
 ```
 
 ```
-44 passed
+53 passed
 ```
 
 The full stack was also run end to end offline (`CEX_VENUE=mock`,
 `DEX_VENUE=mock`), confirming quotes → opportunities → paper trades → SQLite →
 API, and separately against the real Binance and Jupiter endpoints to confirm
 graceful degradation when venues are unreachable.
+
+## Second pass (findings 23-27)
+
+A follow-up pass verified the connectors against current (November 2026)
+official documentation, ran dependency audits, and checked restart behavior.
+
+### 23. HIGH — the default Jupiter endpoint no longer exists
+
+`JUPITER_QUOTE_URL` defaulted to `https://quote-api.jup.ag/v6/quote`, which
+Jupiter **retired on 2025-10-01** (announced by Jupiter DevRel; the migration
+target is `swap/v1/quote` on `lite-api.jup.ag`/`api.jup.ag`, same
+`inputMint/outputMint/amount/slippageBps` → `outAmount` interface). Every DEX
+quote — and therefore every scan — fails against the live API today. This was
+not catchable from the sandbox (its proxy blocks the hosts either way); it
+surfaced from the docs check. Defaults now point at
+`lite-api.jup.ag/swap/v1/quote`, with `JUPITER_API_KEY` support (sent as
+`x-api-key`) for the keyed `api.jup.ag` host. Rate-limit note added to the
+README: at a 2s scan interval the two quote calls per scan sit exactly at the
+free tier's ~60 req/min. **NEEDS LIVE VALIDATION.**
+
+The React prototype's `api.jup.ag/swap/v2` order/execute endpoint, by
+contrast, is current — it superseded Ultra v1.
+
+### 24. HIGH — risk state did not survive a restart
+
+`RiskEngine` state was purely in-memory: a process restart (or a crash, or
+`docker compose restart`) silently released a tripped kill switch and zeroed
+the daily realized loss, so a bot that halted for a one-sided fill would
+resume trading on reboot. Now: a `bot_state` row persists the kill switch and
+its reason (written whenever it changes, including from the API endpoints),
+and startup recomputes today's realized **live** PnL from the trades table —
+re-engaging the kill switch if the daily loss limit was already breached.
+Verified live: engage kill switch → kill the process → restart → `/api/status`
+shows `kill_switch: true` with the original reason.
+
+### 25. MEDIUM — order signing used the local clock
+
+Binance order timestamps came from `time.time()`; local skew beyond
+`recvWindow` (5s) rejects every order with `-1021`. The connector now syncs an
+offset from `GET /api/v3/time` (cached 30 min, local-clock fallback with a 5
+min retry on sync failure).
+
+### 26. MEDIUM — vulnerable and unused dependencies
+
+`pip-audit` on the shipped pins: `starlette 0.45.3` (8 advisories),
+`python-multipart 0.0.20` (5), `orjson 3.10.15` (1), plus dev-only `pytest
+8.3.4` (1). `python-multipart` and `orjson` were not imported anywhere —
+removed. The rest upgraded (fastapi 0.162.2 / starlette 1.10.0 /
+SQLAlchemy 2.1.8 / ccxt 4.5.92 / pydantic 2.14.3 / pytest 9.2.0); all 53 tests
+pass on the new pins and `pip-audit` is clean on prod and dev requirements.
+`npm audit` on the web-app dev toolchain: clean after moving to vitest 5.
+
+### 27. LOW — tooling
+
+`ruff` (config in `backend/ruff.toml`) and `mypy` now run clean and are pinned
+in `requirements-dev.txt`. `Side` became a `StrEnum`.
 
 ## What this audit does not cover
 

@@ -1,13 +1,21 @@
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 from app.config import settings
+from app.connectors.base import MarketConnector
 from app.connectors.factory import build_cex_connector, build_dex_connector
 from app.engine.executor import TradeExecutor
 from app.engine.pricing import build_opportunity
 from app.engine.risk import RiskEngine
 from app.models.schemas import Opportunity, Quote, TradeRecord
-from app.services.repository import save_opportunity, save_trade
+from app.services.repository import (
+    load_bot_state,
+    realized_pnl_since,
+    save_bot_state,
+    save_opportunity,
+    save_trade,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +29,11 @@ class ArbScanner:
         self.trades: list[TradeRecord] = []
         self._task: asyncio.Task | None = None
         self._scan_lock = asyncio.Lock()
-        self._cex = None
-        self._dex = None
+        self._cex: MarketConnector | None = None
+        self._dex: MarketConnector | None = None
         self._executor: TradeExecutor | None = None
+        self._persisted_state: tuple[bool, str | None] | None = None
+        self._state_restored = False
 
     # Connectors are built lazily so that importing this module cannot fail and
     # so a misconfigured venue surfaces as a startup error, not an import error.
@@ -34,23 +44,59 @@ class ArbScanner:
             self._executor = TradeExecutor(self._cex, self._dex, self.risk)
 
     @property
-    def cex(self):
+    def cex(self) -> MarketConnector:
         self._ensure_connectors()
+        assert self._cex is not None
         return self._cex
 
     @property
-    def dex(self):
+    def dex(self) -> MarketConnector:
         self._ensure_connectors()
+        assert self._dex is not None
         return self._dex
 
     @property
     def executor(self) -> TradeExecutor:
         self._ensure_connectors()
+        assert self._executor is not None
         return self._executor
+
+    async def restore_state(self) -> None:
+        """Reload persisted kill-switch state and recompute today's live PnL.
+
+        Called once at startup (idempotent). Without it a restart silently
+        released the kill switch and zeroed the daily loss.
+        """
+        if self._state_restored:
+            return
+        self._state_restored = True
+        state = await load_bot_state()
+        start_of_day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        daily_pnl = await realized_pnl_since(start_of_day)
+        self.risk.restore(
+            kill_switch=bool(state.kill_switch) if state else False,
+            reason=state.kill_switch_reason if state else None,
+            daily_pnl_usd=daily_pnl,
+        )
+        self._persisted_state = (self.risk.kill_switch, self.risk.kill_switch_reason)
+        logger.info(
+            "state restored: kill_switch=%s daily_pnl=%.4f",
+            self.risk.kill_switch,
+            daily_pnl,
+        )
+
+    async def sync_risk_state(self) -> None:
+        """Persist the kill switch whenever it changed since the last write."""
+        current = (self.risk.kill_switch, self.risk.kill_switch_reason)
+        if current == self._persisted_state:
+            return
+        await save_bot_state(kill_switch=current[0], reason=current[1])
+        self._persisted_state = current
 
     async def start(self) -> None:
         if self.running:
             return
+        await self.restore_state()
         self._ensure_connectors()
         self.running = True
         self._task = asyncio.create_task(self._loop())
@@ -99,14 +145,20 @@ class ArbScanner:
                 # config errors behind a kill switch with no explanation.
                 logger.exception("scan failed")
                 self.risk.record_failure(f"scan error: {exc}")
+            try:
+                await self.sync_risk_state()
+            except Exception:
+                logger.exception("failed to persist risk state")
             await asyncio.sleep(settings.scan_interval_seconds)
 
     async def health(self) -> dict:
+        cex: dict | BaseException
+        dex: dict | BaseException
         cex, dex = await asyncio.gather(
             self.cex.health(), self.dex.health(), return_exceptions=True
         )
 
-        def norm(venue, result):
+        def norm(venue: str, result: dict | BaseException) -> dict:
             if isinstance(result, BaseException):
                 return {"venue": venue, "ok": False, "error": str(result)}
             return result
