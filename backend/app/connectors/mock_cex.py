@@ -1,10 +1,13 @@
 import random
 from datetime import datetime, UTC
-from app.connectors.base import MarketConnector
-from app.models.schemas import Quote
+
+from app.connectors.base import ExecutionConnector
+from app.models.schemas import OrderResult, Quote, Side
 
 
-class MockCexConnector(MarketConnector):
+class MockCexConnector(ExecutionConnector):
+    """Offline price source for paper runs and tests. Never places orders."""
+
     venue = "Mock CEX"
 
     def __init__(self, mid_price: float = 145.0):
@@ -20,4 +23,12 @@ class MockCexConnector(MarketConnector):
             bid=round(self.mid_price - spread, 4),
             ask=round(self.mid_price + spread, 4),
             ts=datetime.now(UTC),
+            source="mock",
+        )
+
+    async def market_order(
+        self, pair: str, side: Side, quote_size_usd: float
+    ) -> OrderResult:
+        raise RuntimeError(
+            "Mock CEX cannot place orders. It exists for paper/offline runs only."
         )

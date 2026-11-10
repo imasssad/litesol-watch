@@ -22,3 +22,4 @@ th { color: #6b7280; font-weight: 600; }
 .bad { background: #fee2e2; color: #991b1b; }
 pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 12px; overflow: auto; }
 code { background: rgba(255,255,255,0.7); padding: 2px 6px; border-radius: 6px; }
+#error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }

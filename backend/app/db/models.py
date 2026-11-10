@@ -10,7 +10,9 @@ class Base(DeclarativeBase):
 class OpportunityRow(Base):
     __tablename__ = "opportunities"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), index=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
     pair: Mapped[str] = mapped_column(String(32))
     direction: Mapped[str] = mapped_column(String(128))
     buy_venue: Mapped[str] = mapped_column(String(64))
@@ -23,13 +25,15 @@ class OpportunityRow(Base):
     trade_size_usd: Mapped[float] = mapped_column(Float)
     expected_profit_usd: Mapped[float] = mapped_column(Float)
     executable: Mapped[bool] = mapped_column(Boolean)
-    reason: Mapped[str] = mapped_column(String(256))
+    reason: Mapped[str] = mapped_column(Text)
 
 
 class TradeRow(Base):
     __tablename__ = "trades"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), index=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
     pair: Mapped[str] = mapped_column(String(32))
     direction: Mapped[str] = mapped_column(String(128))
     buy_venue: Mapped[str] = mapped_column(String(64))

@@ -1,3 +1,19 @@
+/*
+ * Solana DEX bot - UNBUILT PROTOTYPE. See web-app/README.md before touching this.
+ *
+ * Audit summary:
+ *  - This file has no build setup in this repository (it imports framer-motion,
+ *    lucide-react, @solana/wallet-adapter-*, @solana/web3.js and @/components/ui/*,
+ *    none of which are vendored here). It does not compile as-is.
+ *  - Live mode is DISABLED below (LIVE_MODE_SUPPORTED). It used to submit real
+ *    mainnet swaps while recording entry price, token amount and PnL from
+ *    randomWalk() - a random number generator - so every take-profit, stop-loss
+ *    and PnL figure in live mode was fiction while the swaps were real.
+ *    Re-enabling it requires reading actual fills back from the chain first.
+ *  - Entries are random (Math.random() > 0.88). This is a UI demo, not a strategy.
+ *
+ * The simulation path is unchanged and safe to run.
+ */
 import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Play, Pause, Wallet, TrendingUp, Shield, Send, RotateCcw, Activity, PlugZap, AlertTriangle } from "lucide-react";
@@ -13,12 +29,18 @@ const SOL_MINT = "So11111111111111111111111111111111111111112";
 const DEFAULT_RPC = "https://api.mainnet-beta.solana.com";
 const JUPITER_SWAP_V2 = "https://api.jup.ag/swap/v2";
 
+// Live execution is gated off. The surrounding bookkeeping reads prices from
+// randomWalk(), not from actual swap results, so a live run would place real
+// orders and then manage them against made-up numbers. Do not flip this to true
+// without first reconciling positions from on-chain fills.
+const LIVE_MODE_SUPPORTED = false;
+
 const DEFAULT_PAIRS = [
-  { id: 1, name: "PAIR 1", mint: "TOKEN_MINT_1_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_1_REPLACE", price: 0.042, maxUsd: 25, takeProfit: 20, stopLoss: 8, trailingStop: 6, slippageBps: 150, enabled: true },
-  { id: 2, name: "PAIR 2", mint: "TOKEN_MINT_2_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_2_REPLACE", price: 0.118, maxUsd: 25, takeProfit: 25, stopLoss: 10, trailingStop: 8, slippageBps: 200, enabled: true },
-  { id: 3, name: "PAIR 3", mint: "TOKEN_MINT_3_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_3_REPLACE", price: 0.0065, maxUsd: 25, takeProfit: 30, stopLoss: 12, trailingStop: 10, slippageBps: 250, enabled: true },
-  { id: 4, name: "PAIR 4", mint: "TOKEN_MINT_4_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_4_REPLACE", price: 1.24, maxUsd: 25, takeProfit: 15, stopLoss: 6, trailingStop: 5, slippageBps: 100, enabled: true },
-  { id: 5, name: "PAIR 5", mint: "TOKEN_MINT_5_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_5_REPLACE", price: 0.33, maxUsd: 25, takeProfit: 22, stopLoss: 9, trailingStop: 7, slippageBps: 180, enabled: true },
+  { id: 1, name: "PAIR 1", mint: "TOKEN_MINT_1_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_1_REPLACE", decimals: 6, price: 0.042, maxUsd: 25, takeProfit: 20, stopLoss: 8, trailingStop: 6, slippageBps: 150, enabled: true },
+  { id: 2, name: "PAIR 2", mint: "TOKEN_MINT_2_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_2_REPLACE", decimals: 6, price: 0.118, maxUsd: 25, takeProfit: 25, stopLoss: 10, trailingStop: 8, slippageBps: 200, enabled: true },
+  { id: 3, name: "PAIR 3", mint: "TOKEN_MINT_3_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_3_REPLACE", decimals: 6, price: 0.0065, maxUsd: 25, takeProfit: 30, stopLoss: 12, trailingStop: 10, slippageBps: 250, enabled: true },
+  { id: 4, name: "PAIR 4", mint: "TOKEN_MINT_4_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_4_REPLACE", decimals: 6, price: 1.24, maxUsd: 25, takeProfit: 15, stopLoss: 6, trailingStop: 5, slippageBps: 100, enabled: true },
+  { id: 5, name: "PAIR 5", mint: "TOKEN_MINT_5_REPLACE", inputMint: USDC_MINT, outputMint: "TOKEN_MINT_5_REPLACE", decimals: 6, price: 0.33, maxUsd: 25, takeProfit: 22, stopLoss: 9, trailingStop: 7, slippageBps: 180, enabled: true },
 ];
 
 function randomWalk(price) {
@@ -45,6 +67,24 @@ function isValidMint(value) {
 
 function usdToUsdcBaseUnits(usd) {
   return Math.floor(Number(usd) * 1_000_000).toString();
+}
+
+// A token amount is in human units; the Jupiter API wants base units. Sending
+// Math.floor(tokenAmount) treated 595.2 tokens as 595 base units, i.e. 0.000595
+// of a 6-decimal token - a sell ~10^6 times too small.
+function tokensToBaseUnits(amount, decimals = 6) {
+  return Math.floor(Number(amount) * 10 ** decimals).toString();
+}
+
+// Chunked so a large transaction cannot blow the argument limit the way
+// String.fromCharCode(...bytes) does on a big spread.
+function bytesToBase64(bytes) {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 function getTxFromOrder(order) {
@@ -133,12 +173,21 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
   }, [publicKey, connection]);
 
   async function executeJupiterSwap(pair, side, usdAmount) {
+    if (!LIVE_MODE_SUPPORTED) {
+      throw new Error(
+        "Live execution is disabled in this prototype: positions and PnL are tracked " +
+          "from simulated prices, not real fills. See web-app/README.md."
+      );
+    }
     if (!connected || !publicKey || !signTransaction) throw new Error("Connect a Solana wallet first.");
     if (!isValidMint(pair.outputMint) || !isValidMint(pair.inputMint)) throw new Error(`${pair.name}: replace placeholder mint addresses first.`);
 
     const inputMint = side === "BUY" ? pair.inputMint : pair.outputMint;
     const outputMint = side === "BUY" ? pair.outputMint : pair.inputMint;
-    const amount = side === "BUY" ? usdToUsdcBaseUnits(usdAmount) : String(Math.floor(usdAmount));
+    const amount =
+      side === "BUY"
+        ? usdToUsdcBaseUnits(usdAmount)
+        : tokensToBaseUnits(usdAmount, pair.decimals ?? 6);
 
     const order = await jupiterOrder({
       inputMint,
@@ -153,7 +202,7 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
 
     const tx = VersionedTransaction.deserialize(Uint8Array.from(atob(base64Tx), (c) => c.charCodeAt(0)));
     const signedTx = await signTransaction(tx);
-    const signedBase64 = btoa(String.fromCharCode(...signedTx.serialize()));
+    const signedBase64 = bytesToBase64(signedTx.serialize());
     const result = await jupiterExecute({ signedTransaction: signedBase64, requestId: order.requestId });
 
     return {
@@ -165,14 +214,19 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
 
   async function sweepProfitSol(usdProfit) {
     if (!liveMode || !publicKey || !sendTransaction || !profitWalletAddress || usdProfit <= minSweep) return 0;
-    const sweepUsd = usdProfit * (sweepPct / 100);
+    const intendedSweepUsd = usdProfit * (sweepPct / 100);
     const lamports = Math.floor(0.001 * LAMPORTS_PER_SOL);
     const toPubkey = new PublicKey(profitWalletAddress);
     const tx = new Transaction().add(SystemProgram.transfer({ fromPubkey: publicKey, toPubkey, lamports }));
     const sig = await sendTransaction(tx, connection);
     await connection.confirmTransaction(sig, "confirmed");
-    log(`Profit sweep test sent 0.001 SOL to profit wallet. Tx: ${sig}`);
-    return sweepUsd;
+    log(
+      `Profit sweep STUB: sent a fixed 0.001 SOL, not the ${money(intendedSweepUsd)} ` +
+        `of profit it was asked to sweep. Tx: ${sig}`
+    );
+    // Report what actually moved (nothing, in USD terms), not what was intended.
+    // Returning intendedSweepUsd here made the books claim a sweep that never happened.
+    return 0;
   }
 
   async function buy(pair) {
@@ -304,7 +358,14 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
         <Card className="bg-amber-950/50 border-amber-800 rounded-2xl">
           <CardContent className="p-4 flex gap-3 text-sm text-amber-100">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-300" />
-            <div><strong>Live trading warning:</strong> this can execute irreversible mainnet swaps. Replace placeholder mints, connect a burner wallet, fund only what you can afford to lose, and test with very small USDC amounts first.</div>
+            <div>
+              <strong>Prototype only:</strong> live execution is disabled. This UI tracks
+              positions and PnL from simulated prices, so a live run would place real,
+              irreversible mainnet swaps and then manage them against numbers that do not
+              reflect actual fills. Entries are random, not a strategy. See
+              <code className="mx-1">web-app/README.md</code> for what must be built before
+              any live use.
+            </div>
           </CardContent>
         </Card>
 
@@ -323,7 +384,13 @@ function SolanaDexBotLiveApp({ rpcUrl, setRpcUrl }) {
                 <h2 className="text-xl font-semibold">Live Pairs</h2>
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-2 text-sm text-slate-300">
-                    <input type="checkbox" checked={liveMode} onChange={(e) => setLiveMode(e.target.checked)} /> Live mode
+                    <input
+                      type="checkbox"
+                      checked={liveMode}
+                      disabled={!LIVE_MODE_SUPPORTED}
+                      onChange={(e) => setLiveMode(e.target.checked)}
+                    />{" "}
+                    {LIVE_MODE_SUPPORTED ? "Live mode" : "Live mode (disabled - see README)"}
                   </label>
                   <span className={`text-xs px-3 py-1 rounded-full ${running ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-700 text-slate-300"}`}>{running ? "RUNNING" : "PAUSED"}</span>
                 </div>
