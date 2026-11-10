@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arb Bot Production v1</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <div>
+        <h1>Arb Bot Production v1</h1>
+        <p>CEX ↔ DEX arbitrage scanner with live-execution gates, persistence, auth, and kill switch.</p>
+      </div>
+      <div class="controls">
+        <input id="token" type="password" placeholder="API token" />
+        <button onclick="post('/api/start')">Start</button>
+        <button onclick="post('/api/stop')">Stop</button>
+        <button onclick="post('/api/scan-once')">Scan Once</button>
+        <button class="danger" onclick="post('/api/kill-switch/on')">Kill Switch</button>
+        <button onclick="post('/api/kill-switch/off')">Reset Kill</button>
+      </div>
+    </section>
+
+    <section class="warning">
+      <strong>Safety:</strong> live trades require both <code>LIVE_TRADING=true</code> and <code>EXECUTION_ENABLED=true</code>. Keep false until keys, wallet signing, and order sizes are fully tested.
+    </section>
+
+    <section class="grid" id="status"></section>
+
+    <section>
+      <h2>Venue Health</h2>
+      <pre id="health">Loading...</pre>
+    </section>
+
+    <section>
+      <h2>Latest Quotes</h2>
+      <table id="quotes"></table>
+    </section>
+
+    <section>
+      <h2>Opportunities</h2>
+      <table id="opportunities"></table>
+    </section>
+
+    <section>
+      <h2>Trades</h2>
+      <table id="trades"></table>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
