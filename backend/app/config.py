@@ -8,6 +8,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_API_TOKEN = "change-me-long-random-token"
+# Each scan makes TWO Jupiter quote calls (one per direction). The keyless
+# lite-api tier allows roughly 60 requests/minute, so anything under this
+# interval generates continuous 429s and overload 5xx - which looks like "the
+# bot is broken" but is really a configuration that cannot work.
+JUPITER_CALLS_PER_SCAN = 2
+JUPITER_KEYLESS_MIN_INTERVAL_SECONDS = 4.0
+
 SUPPORTED_CEX_VENUES = {"binance", "mexc", "bingx", "mock"}
 SUPPORTED_DEX_VENUES = {"jupiter", "mock"}
 
@@ -30,7 +37,7 @@ class Settings(BaseSettings):
     max_slippage_bps: float = 35
     max_quote_age_seconds: float = 2.0
     max_consecutive_failures: int = 3
-    scan_interval_seconds: float = 2
+    scan_interval_seconds: float = 4
 
     cex_venue: str = "binance"
     cex_fee_bps: float = 10
@@ -102,6 +109,18 @@ class Settings(BaseSettings):
         if self.max_consecutive_failures < 1:
             raise ValueError("MAX_CONSECUTIVE_FAILURES must be at least 1.")
 
+        if self.uses_keyless_jupiter and self.scan_interval_seconds < JUPITER_KEYLESS_MIN_INTERVAL_SECONDS:
+            logger.warning(
+                "SCAN_INTERVAL_SECONDS=%s would make %d Jupiter calls per scan "
+                "(~%.0f req/min), above what the keyless tier allows. Using %.1fs "
+                "instead. Set JUPITER_API_KEY and point JUPITER_QUOTE_URL at "
+                "api.jup.ag to scan faster.",
+                self.scan_interval_seconds,
+                JUPITER_CALLS_PER_SCAN,
+                (60.0 / self.scan_interval_seconds) * JUPITER_CALLS_PER_SCAN,
+                JUPITER_KEYLESS_MIN_INTERVAL_SECONDS,
+            )
+
         if self.trade_size_usd > self.max_trade_usd:
             logger.warning(
                 "TRADE_SIZE_USD=%s exceeds MAX_TRADE_USD=%s; trades will be capped at %s.",
@@ -123,6 +142,26 @@ class Settings(BaseSettings):
     @property
     def auth_configured(self) -> bool:
         return bool(self.api_auth_token) and self.api_auth_token != PLACEHOLDER_API_TOKEN
+
+    @property
+    def uses_keyless_jupiter(self) -> bool:
+        return self.dex_venue.lower().strip() == "jupiter" and not self.jupiter_api_key
+
+    @property
+    def effective_scan_interval_seconds(self) -> float:
+        """The interval actually used, floored to what the venue tolerates.
+
+        Scanning faster than the keyless Jupiter tier allows does not get more
+        data - it gets 429s and 5xx. Rather than let a stale config generate a
+        permanent error state, the floor is applied and reported.
+        """
+        if self.uses_keyless_jupiter:
+            return max(self.scan_interval_seconds, JUPITER_KEYLESS_MIN_INTERVAL_SECONDS)
+        return self.scan_interval_seconds
+
+    @property
+    def scan_interval_was_raised(self) -> bool:
+        return self.effective_scan_interval_seconds > self.scan_interval_seconds
 
     @property
     def effective_trade_size_usd(self) -> float:

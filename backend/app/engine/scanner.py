@@ -155,13 +155,13 @@ class ArbScanner:
 
     def _backoff_delay(self) -> float:
         return min(
-            settings.scan_interval_seconds * (2**self._rate_limit_backoff),
+            settings.effective_scan_interval_seconds * (2**self._rate_limit_backoff),
             MAX_BACKOFF_SECONDS,
         )
 
     async def _loop(self) -> None:
         while self.running:
-            delay = settings.scan_interval_seconds
+            delay = settings.effective_scan_interval_seconds
             try:
                 await self.scan_once()
                 self._rate_limit_backoff = 0
