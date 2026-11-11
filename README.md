@@ -76,6 +76,26 @@ ruff check app tests    # lint (config in backend/ruff.toml)
 mypy app --ignore-missing-imports
 ```
 
+## Deploying to a server
+
+See [`deploy/README.md`](deploy/README.md). Short version, from your machine:
+
+```bash
+rsync -az --delete --exclude .git --exclude backend/.venv \
+  --exclude backend/data --exclude backend/.env \
+  --exclude web-app/node_modules --exclude data \
+  ./ <user>@<server-ip>:~/litesol-watch/
+```
+
+```bash
+ssh <user>@<server-ip> 'bash ~/litesol-watch/deploy/bootstrap.sh'
+```
+
+The bootstrap script installs nothing silently, generates a random
+`API_AUTH_TOKEN`, deploys in paper mode, and never overwrites an existing
+`backend/.env`. The API binds to loopback only; reach the dashboard over an
+SSH tunnel (`ssh -L 8000:127.0.0.1:8000 ...`).
+
 ## Docker
 
 ```bash
