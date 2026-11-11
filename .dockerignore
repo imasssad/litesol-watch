@@ -1,0 +1,38 @@
+# Keep secrets OUT of image layers. backend/.env holds the API token and, if
+# live trading is ever enabled, exchange keys. `COPY backend /app/backend`
+# would otherwise bake it in root-owned and mode 600, which both leaks it into
+# every image layer and makes it unreadable to the non-root `arbbot` user the
+# container runs as (PermissionError on '.env' at startup).
+# The container gets its config from compose's `env_file:` as environment
+# variables instead; no dotenv file is needed inside the image.
+backend/.env
+backend/.env.*
+!backend/.env.example
+.env
+.env.*
+
+# Local runtime state. The database is a mounted volume, not image content.
+data
+backend/data
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Build/test caches and local virtualenvs
+backend/.venv
+backend/.pytest_cache
+backend/.ruff_cache
+backend/.mypy_cache
+**/__pycache__
+**/*.py[cod]
+web-app/node_modules
+
+# Not needed at runtime
+.git
+.gitignore
+.github
+AUDIT.md
+REPORT.md
+deploy
+web-app

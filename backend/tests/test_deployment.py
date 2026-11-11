@@ -1,0 +1,64 @@
+"""Deployment regressions.
+
+The first container deploy crashed with
+`PermissionError: [Errno 13] Permission denied: '.env'` because there was no
+.dockerignore: `COPY backend /app/backend` baked backend/.env into the image
+root-owned and mode 600, which the non-root `arbbot` runtime user cannot read.
+It also put the API token into an image layer.
+"""
+
+from pathlib import Path
+
+from app.config import Settings
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _dockerignore_patterns() -> set[str]:
+    path = REPO_ROOT / ".dockerignore"
+    assert path.is_file(), ".dockerignore is missing; secrets would be copied into the image"
+    return {
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+def test_dockerignore_excludes_the_env_file():
+    patterns = _dockerignore_patterns()
+    assert "backend/.env" in patterns, "backend/.env must never enter an image layer"
+    assert "backend/.env.*" in patterns
+
+
+def test_dockerignore_keeps_the_env_example():
+    assert "!backend/.env.example" in _dockerignore_patterns()
+
+
+def test_dockerignore_excludes_local_runtime_state():
+    patterns = _dockerignore_patterns()
+    # The database is a mounted volume; baking one in would shadow the mount
+    # and ship stale trade history.
+    assert "data" in patterns
+    assert "backend/data" in patterns
+    assert "backend/.venv" in patterns
+
+
+def test_settings_load_with_no_dotenv_file_present():
+    """The container is configured purely by env vars from compose's env_file.
+
+    If this breaks, the image would need a readable .env inside it, which is
+    exactly what caused the original failure.
+    """
+    settings = Settings(
+        _env_file=None,
+        api_auth_token="deployment-test-token-0123456789",
+        database_url="sqlite+aiosqlite:///:memory:",
+    )
+    assert settings.auth_configured is True
+    assert settings.live_execution_allowed is False
+
+
+def test_compose_supplies_env_and_keeps_api_on_loopback():
+    compose = (REPO_ROOT / "docker-compose.yml").read_text()
+    assert "backend/.env" in compose, "compose must inject config via env_file"
+    assert "127.0.0.1:8000:8000" in compose, "control API must not bind all interfaces"

@@ -9,6 +9,12 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY backend /app/backend
 COPY frontend /app/frontend
 
+# Defense in depth: .dockerignore is what keeps backend/.env out of the build
+# context, but if this image is ever built without it, a baked-in root-owned
+# .env makes the app crash at startup (unreadable by the non-root user below)
+# and leaks the API token into a layer. Config comes from the environment.
+RUN rm -f /app/backend/.env /app/backend/.env.*
+
 # Run as a non-root user: this process holds exchange API keys in its
 # environment and should not have write access to the image.
 RUN useradd --create-home --uid 10001 arbbot \
