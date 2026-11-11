@@ -364,3 +364,34 @@ def test_no_health_check_points_at_an_authenticated_endpoint():
                 assert "X-API-Token" in code, f"{script}: unauthenticated /api/status call"
             if "curl -sf" in code and "/api/" in code:
                 assert "/api/ping" in code, f"{script}: liveness probe must use /api/ping"
+
+
+def test_setup_cicd_identifies_the_key_by_material_not_comment():
+    """Guard against locking the user out of SSH.
+
+    An earlier draft matched on the key's comment field. An empty comment
+    makes `grep -vF ""` match every line, which would have erased
+    authorized_keys - login key included.
+    """
+    script = (REPO_ROOT / "deploy" / "setup-cicd.sh").read_text()
+    assert "KEY_BLOB=\"$(awk '{print $2}'" in script, "must match on key material"
+    assert "awk '{print $NF}'" not in script, "must not match on the comment field"
+    assert "${#KEY_BLOB} -lt 40" in script, "must refuse to act on a short/empty marker"
+
+
+def test_setup_cicd_backs_up_and_verifies_authorized_keys():
+    script = (REPO_ROOT / "deploy" / "setup-cicd.sh").read_text()
+    assert "authorized_keys.bak" in script, "must back up before rewriting"
+    assert '"$AFTER" -lt "$BEFORE"' in script, "must detect lost keys"
+    assert 'cp "$BACKUP" ~/.ssh/authorized_keys' in script, "must restore on loss"
+
+
+def test_setup_cicd_pins_the_key_to_a_forced_command():
+    script = (REPO_ROOT / "deploy" / "setup-cicd.sh").read_text()
+    for restriction in [
+        'command=\\"$DEPLOY_SCRIPT\\"',
+        "no-port-forwarding",
+        "no-agent-forwarding",
+        "no-pty",
+    ]:
+        assert restriction in script, f"deploy key must carry {restriction}"
