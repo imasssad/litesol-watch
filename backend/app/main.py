@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
+from app.connectors.base import RateLimited
 from app.db.init_db import init_db
 from app.engine.scanner import scanner
 from app.services.repository import recent_opportunities, recent_trades
@@ -128,7 +129,36 @@ async def trades():
 
 @app.post("/api/scan-once", dependencies=[Depends(require_auth)])
 async def scan_once():
-    return await scanner.scan_once()
+    """Run one scan now.
+
+    The background loop handles venue failures itself; this endpoint used to
+    let them escape as a bare 500 with no explanation, so the dashboard could
+    only report "500 (Internal Server Error)". Map them onto statuses that say
+    what actually went wrong.
+    """
+    try:
+        return await scanner.scan_once()
+    except RateLimited as exc:
+        # Not a trading failure, exactly as in the scan loop - so this does not
+        # touch the consecutive-failure budget either.
+        headers = {}
+        if exc.retry_after:
+            headers["Retry-After"] = str(int(exc.retry_after))
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"{exc.venue} is rate limiting this client. The scanner backs "
+                "off automatically; try again shortly."
+            ),
+            headers=headers,
+        ) from exc
+    except Exception as exc:
+        logger.exception("manual scan failed")
+        scanner.risk.record_failure(f"manual scan error: {exc}")
+        await scanner.sync_risk_state()
+        raise HTTPException(
+            status_code=502, detail=f"scan failed: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 @app.post("/api/start", dependencies=[Depends(require_auth)])
