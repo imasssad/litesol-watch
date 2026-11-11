@@ -93,26 +93,6 @@ while [ -z "${EMAIL// }" ] || [[ "$EMAIL" != *@*.* ]]; do
     read -r -p "Email for certificate expiry notices (required): " EMAIL
 done
 
-# --- basic auth -----------------------------------------------------------
-USER_NAME="$(get_env BASIC_AUTH_USER)"
-HASH="$(get_env BASIC_AUTH_HASH)"
-if [ -z "$USER_NAME" ] || [ -z "$HASH" ]; then
-    read -r -p "Dashboard login username [admin]: " USER_NAME
-    USER_NAME="${USER_NAME:-admin}"
-    echo "Choose a password (not echoed). This is internet-facing, so make it strong."
-    read -r -s -p "Password: " PASS; echo
-    read -r -s -p "Confirm:  " PASS2; echo
-    [ "$PASS" = "$PASS2" ] || { echo "ERROR: passwords do not match." >&2; exit 1; }
-    [ ${#PASS} -ge 12 ] || { echo "ERROR: use at least 12 characters." >&2; exit 1; }
-    echo "==> Hashing with bcrypt..."
-    if [ -n "$DRY_RUN" ]; then
-        HASH='$2a$14$dryrunDryrunDryrunDryrunDryrunDryrunDryrunDryrunDryrun'
-    else
-        HASH="$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$PASS")"
-    fi
-    unset PASS PASS2
-fi
-
 # --- TLS mode -------------------------------------------------------------
 # A public ACME certificate requires the CA to reach THIS server directly. When
 # a CDN proxies the hostname that is impossible without changing the CDN, so we
@@ -150,7 +130,7 @@ fi
 echo "    TLS_ARG=$TLS_ARG"
 
 # --- sanity-check every value before writing ------------------------------
-for pair in "PUBLIC_HOSTNAME:$HOST" "ACME_EMAIL:$EMAIL" "TLS_ARG:$TLS_ARG" "BASIC_AUTH_USER:$USER_NAME" "BASIC_AUTH_HASH:$HASH"; do
+for pair in "PUBLIC_HOSTNAME:$HOST" "ACME_EMAIL:$EMAIL" "TLS_ARG:$TLS_ARG"; do
     name="${pair%%:*}"; value="${pair#*:}"
     if [ -z "${value// }" ]; then
         echo "ERROR: $name is empty. Every setting is required." >&2
@@ -170,8 +150,6 @@ ACME_EMAIL=${EMAIL}
 # The word "internal" means it uses its own CA - correct when a CDN
 # terminates TLS for visitors and only this origin leg must satisfy it.
 TLS_ARG=${TLS_ARG}
-BASIC_AUTH_USER=${USER_NAME}
-BASIC_AUTH_HASH=${HASH}
 EOF
 chmod 600 "$CADDY_ENV"
 echo "==> Wrote $CADDY_ENV"
@@ -246,8 +224,11 @@ if [ "$STATUS" = "401" ] || [ "$STATUS" = "200" ]; then
 
     https://${HOST}
 
-    Browser login: ${USER_NAME} / the password you set
-    Then paste API_AUTH_TOKEN into the dashboard to use the control buttons.
+    Open it and paste API_AUTH_TOKEN into the unlock screen. Every API
+    endpoint requires that token; only the page itself is public.
+
+    Read the token with:
+      grep '^API_AUTH_TOKEN=' backend/.env
 
     The bot stays bound to 127.0.0.1; Caddy is the only public route in.
 EOF

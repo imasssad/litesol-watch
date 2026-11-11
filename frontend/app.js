@@ -30,7 +30,9 @@ function authHeaders() {
 
 // --- helpers ----------------------------------------------------------------
 async function getJson(path) {
-  const res = await fetch(path);
+  // Every API endpoint is authenticated now, reads included - there is no
+  // proxy password in front, so the token is the only gate.
+  const res = await fetch(path, { headers: authHeaders() });
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json();
 }
@@ -132,15 +134,20 @@ async function attemptUnlock(candidate) {
 
 async function probeConnection() {
   const dot = document.getElementById('gateDot');
+  const label = document.getElementById('gateStatus');
   try {
-    const status = await getJson('/api/status');
-    dot.className = 'dot online';
-    document.getElementById('gateStatus').textContent = status.live_execution_allowed
-      ? 'Bot online · LIVE EXECUTION ENABLED'
-      : 'Bot online · paper mode';
+    // /api/ping needs no token; everything else does.
+    const res = await fetch('/api/ping');
+    if (res.ok) {
+      dot.className = 'dot online';
+      label.textContent = 'Bot online · awaiting token';
+      return;
+    }
+    dot.className = 'dot offline';
+    label.textContent = `Bot responded ${res.status}`;
   } catch {
     dot.className = 'dot offline';
-    document.getElementById('gateStatus').textContent = 'Bot unreachable — is the container running?';
+    label.textContent = 'Bot unreachable — is the container running?';
   }
 }
 
@@ -294,6 +301,12 @@ async function refresh() {
   } catch (e) {
     // Without this, the first failed poll threw out of the interval callback
     // and the dashboard froze on stale numbers with no indication why.
+    if (/-> (401|503)$/.test(e.message)) {
+      token = '';
+      writeToken('');
+      showGate('Your token is no longer accepted. Paste it again.');
+      return;
+    }
     setError(`Dashboard refresh failed: ${e.message}`);
     return;
   }

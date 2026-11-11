@@ -226,12 +226,49 @@ def test_enable_public_picks_internal_tls_behind_a_proxy():
     assert "TLS_ARG" in script
 
 
-def test_caddyfile_gates_everything_behind_basic_auth():
+def test_caddyfile_has_no_proxy_level_password():
+    """The dashboard's token gate is the single login.
+
+    That only holds because the application authenticates every data endpoint
+    (see test_every_data_endpoint_requires_the_token) - without that, removing
+    the proxy password would expose quotes, trades and config to anyone with
+    the URL.
+    """
     caddyfile = (REPO_ROOT / "deploy" / "Caddyfile").read_text()
-    # basic_auth is the Caddy 2.8 name; basicauth is the deprecated alias.
-    assert "basic_auth {" in caddyfile
-    assert "{$BASIC_AUTH_HASH}" in caddyfile, "password must be a hash, never plaintext"
+    assert "basic_auth" not in caddyfile
+    assert "BASIC_AUTH" not in caddyfile
     assert "reverse_proxy arb-bot:8000" in caddyfile
+
+
+def test_every_data_endpoint_requires_the_token():
+    """Load-bearing for the above: nothing but the page and the liveness
+    probe may be readable without the token."""
+    main = (REPO_ROOT / "backend" / "app" / "main.py").read_text()
+    for path in [
+        "/api/status",
+        "/api/health",
+        "/api/quotes",
+        "/api/opportunities",
+        "/api/trades",
+        "/api/scan-once",
+        "/api/start",
+        "/api/stop",
+        "/api/kill-switch/on",
+        "/api/kill-switch/off",
+    ]:
+        decorator = main[main.index(f'"{path}"') : main.index(f'"{path}"') + 120]
+        assert "Depends(require_auth)" in decorator, f"{path} is unauthenticated"
+
+
+def test_ping_is_the_only_public_api_endpoint():
+    """The unlock screen must be able to show reachability before it has a
+    token, and that probe must reveal nothing else."""
+    from app.main import ping
+
+    assert ping is not None
+    main = (REPO_ROOT / "backend" / "app" / "main.py").read_text()
+    ping_decorator = main[main.index('"/api/ping"') : main.index('"/api/ping"') + 60]
+    assert "require_auth" not in ping_decorator
 
 
 def test_caddyfile_sets_security_headers():

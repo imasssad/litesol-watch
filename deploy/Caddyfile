@@ -1,16 +1,17 @@
 # Public entry point for the dashboard.
 #
-# Caddy terminates TLS for PUBLIC_HOSTNAME, enforces basic auth, and only then
-# proxies to the bot on the internal compose network. The bot publishes no
+# Caddy terminates TLS for PUBLIC_HOSTNAME and proxies to the bot on the
+# internal compose network. The bot publishes no
 # public port, so this is the only route in.
 #
 # Set in deploy/caddy.env (written by deploy/enable-public.sh):
 #   PUBLIC_HOSTNAME   the name this is served as
 #   TLS_ARG           an email address  -> public ACME certificate
 #                     the word internal -> Caddy's own CA, for a CDN origin
-#   BASIC_AUTH_USER   login name
-#   BASIC_AUTH_HASH   bcrypt hash: docker run --rm caddy:2.8-alpine \
-#                       caddy hash-password --plaintext 'yourpassword'
+#
+# There is no proxy-level password: the application authenticates every API
+# endpoint with API_AUTH_TOKEN, so the dashboard's own unlock screen is the
+# single gate. Only the static page itself is served unauthenticated.
 
 {$PUBLIC_HOSTNAME} {
 	# TLS_ARG is either an email address, which makes Caddy obtain a public
@@ -22,12 +23,6 @@
 	tls {$TLS_ARG}
 
 	encode zstd gzip
-
-	# Gate everything, including the read-only panels. A port scanner should
-	# find a password prompt, not a trading dashboard.
-	basic_auth {
-		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
-	}
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

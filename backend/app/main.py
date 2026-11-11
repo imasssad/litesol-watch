@@ -73,7 +73,17 @@ async def index():
     return FileResponse(str(index_file))
 
 
-@app.get("/api/status")
+@app.get("/api/ping")
+async def ping():
+    """Unauthenticated liveness probe.
+
+    The unlock screen needs to show whether the bot is reachable before it has
+    a token. It deliberately reveals nothing but that the process is up.
+    """
+    return {"ok": True}
+
+
+@app.get("/api/status", dependencies=[Depends(require_auth)])
 async def status():
     return {
         "app_name": settings.app_name,
@@ -107,22 +117,22 @@ async def auth_verify():
     return {"ok": True}
 
 
-@app.get("/api/health")
+@app.get("/api/health", dependencies=[Depends(require_auth)])
 async def health():
     return await scanner.health()
 
 
-@app.get("/api/quotes")
+@app.get("/api/quotes", dependencies=[Depends(require_auth)])
 async def quotes():
     return scanner.latest_quotes
 
 
-@app.get("/api/opportunities")
+@app.get("/api/opportunities", dependencies=[Depends(require_auth)])
 async def opportunities():
     return await recent_opportunities(50)
 
 
-@app.get("/api/trades")
+@app.get("/api/trades", dependencies=[Depends(require_auth)])
 async def trades():
     return await recent_trades(50)
 
