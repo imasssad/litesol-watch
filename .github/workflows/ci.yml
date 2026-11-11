@@ -1,0 +1,122 @@
+name: CI
+
+# Runs on every pull request, and is called by the deploy workflow so that a
+# merge to main can never deploy a red build.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, types, tests, audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        # A clean install on purpose: the greenlet failure that broke the first
+        # container deploy was invisible in a dev venv that already had it.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check app tests
+
+      - name: Type check (mypy)
+        run: mypy app --ignore-missing-imports
+
+      - name: Tests (pytest)
+        run: python -m pytest -q
+
+      - name: Dependency audit (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+  frontend:
+    name: Frontend (web-app logic tests, audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Tests (vitest)
+        run: npm test
+
+      - name: Dependency audit (npm)
+        run: npm audit --audit-level=moderate
+
+  dashboard:
+    name: Dashboard smoke test (real browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          npm install --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+
+      - name: Boot the app in paper mode with mock venues
+        working-directory: backend
+        env:
+          API_AUTH_TOKEN: ci-smoke-token-0123456789abcdef
+          CEX_VENUE: mock
+          DEX_VENUE: mock
+          MIN_NET_SPREAD_BPS: "1"
+          SCAN_INTERVAL_SECONDS: "1"
+          DATABASE_URL: sqlite+aiosqlite:///./data/arb_bot.db
+          LIVE_TRADING: "false"
+          EXECUTION_ENABLED: "false"
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/app.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8000/api/status && exit 0
+            sleep 2
+          done
+          echo "app did not start"; cat /tmp/app.log; exit 1
+
+      - name: Gate and dashboard smoke test
+        run: node .github/scripts/smoke.js
+
+      - name: App logs on failure
+        if: failure()
+        run: cat /tmp/app.log

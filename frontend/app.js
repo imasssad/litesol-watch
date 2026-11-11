@@ -172,14 +172,25 @@ async function post(path) {
 }
 
 function card(label, value, cls = '') {
-  return `<div class="card ${esc(cls)}"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div></div>`;
+  // data-metric is a stable hook for tests and scripts: the visible label is
+  // uppercased by CSS, so matching on rendered text is unreliable.
+  const metric = label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return (
+    `<div class="card ${esc(cls)}" data-metric="${esc(metric)}">` +
+    `<div class="label">${esc(label)}</div>` +
+    `<div class="value">${esc(value)}</div></div>`
+  );
 }
 
 function table(el, rows, cols) {
   const node = document.getElementById(el);
   if (!node) return;
+
+  const counter = document.getElementById(`${el}Count`);
+  if (counter) counter.textContent = rows && rows.length ? `${rows.length}` : '0';
+
   if (!rows || rows.length === 0) {
-    node.innerHTML = '<tr><td>No data yet</td></tr>';
+    node.innerHTML = `<tbody><tr><td class="empty" colspan="${cols.length}">No data yet</td></tr></tbody>`;
     return;
   }
   const head =
@@ -187,12 +198,35 @@ function table(el, rows, cols) {
   const body = rows
     .map((r) => {
       const cells = cols
-        .map((c) => `<td>${c.render ? c.render(r[c.key], r) : esc(r[c.key])}</td>`)
+        .map((c) => {
+          const value = c.render ? c.render(r[c.key], r) : esc(r[c.key]);
+          const cls = typeof c.cls === 'function' ? c.cls(r[c.key], r) : c.cls || '';
+          // data-label drives the stacked card layout under 680px, where a
+          // horizontal scrollbar would be unusable.
+          return `<td class="${esc(cls)}" data-label="${esc(c.label)}">${value}</td>`;
+        })
         .join('');
       return `<tr>${cells}</tr>`;
     })
     .join('');
   node.innerHTML = `${head}<tbody>${body}</tbody>`;
+}
+
+function signed(v) {
+  if (v === null || v === undefined || v === '') return '';
+  return Number(v) >= 0 ? 'num pos' : 'num neg';
+}
+
+// Full ISO timestamps are unreadable in a dense table; keep date only when
+// the row is not from today.
+function shortTime(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  const time = d.toLocaleTimeString([], { hour12: false });
+  return sameDay ? time : `${d.toLocaleDateString()} ${time}`;
 }
 
 function money(v) {
@@ -225,13 +259,18 @@ async function refresh() {
         status.live_execution_allowed ? 'LIVE EXECUTION' : 'SAFE / PAPER',
         status.live_execution_allowed ? 'dangerCard' : ''
       ),
-      card('Running', status.running ? 'Yes' : 'No'),
+      card('Running', status.running ? 'Yes' : 'No', status.running ? 'goodCard' : ''),
       card('Kill Switch', status.kill_switch ? 'ON' : 'OFF', status.kill_switch ? 'dangerCard' : ''),
       card('Pair', status.pair),
       card('Min Spread', `${status.min_net_spread_bps} bps`),
       card('Trade Size', `$${status.trade_size_usd}`),
-      card('Daily PnL', money(status.daily_pnl_usd)),
-      card('Failures', status.failed_trade_count),
+      card(
+        'Daily PnL',
+        money(status.daily_pnl_usd),
+        status.daily_pnl_usd < 0 ? 'dangerCard' : status.daily_pnl_usd > 0 ? 'goodCard' : ''
+      ),
+      card('Failures', status.failed_trade_count, status.failed_trade_count > 0 ? 'dangerCard' : ''),
+      card('Trades', status.trade_count),
     ].join('');
   }
 
@@ -255,36 +294,41 @@ async function refresh() {
   table('quotes', quotes, [
     { key: 'venue', label: 'Venue' },
     { key: 'pair', label: 'Pair' },
-    { key: 'bid', label: 'Bid' },
-    { key: 'ask', label: 'Ask' },
+    { key: 'bid', label: 'Bid', cls: 'num' },
+    { key: 'ask', label: 'Ask', cls: 'num' },
     { key: 'source', label: 'Source' },
-    { key: 'ts', label: 'Time' },
+    { key: 'ts', label: 'Time', cls: 'ts', render: (v) => esc(shortTime(v)) },
   ]);
 
   table('opportunities', opportunities, [
-    { key: 'ts', label: 'Time' },
+    { key: 'ts', label: 'Time', cls: 'ts', render: (v) => esc(shortTime(v)) },
     { key: 'direction', label: 'Direction' },
-    { key: 'buy_price', label: 'Buy' },
-    { key: 'sell_price', label: 'Sell' },
-    { key: 'net_spread_bps', label: 'Net bps' },
-    { key: 'expected_profit_usd', label: 'Expected $', render: money },
+    { key: 'buy_price', label: 'Buy', cls: 'num' },
+    { key: 'sell_price', label: 'Sell', cls: 'num' },
+    { key: 'net_spread_bps', label: 'Net bps', cls: signed },
+    { key: 'expected_profit_usd', label: 'Expected $', cls: signed, render: money },
     {
       key: 'executable',
       label: 'Executable',
       render: (v) => `<span class="badge ${v ? 'good' : 'bad'}">${esc(v)}</span>`,
     },
-    { key: 'reason', label: 'Reason' },
+    { key: 'reason', label: 'Reason', cls: 'reason' },
   ]);
 
   table('trades', trades, [
-    { key: 'ts', label: 'Time' },
+    { key: 'ts', label: 'Time', cls: 'ts', render: (v) => esc(shortTime(v)) },
     { key: 'mode', label: 'Mode' },
     { key: 'direction', label: 'Direction' },
-    { key: 'trade_size_usd', label: 'Size $' },
-    { key: 'expected_profit_usd', label: 'Expected $', render: money },
-    { key: 'realized_profit_usd', label: 'Realized $', render: money },
-    { key: 'status', label: 'Status' },
-    { key: 'error', label: 'Error' },
+    { key: 'trade_size_usd', label: 'Size $', cls: 'num' },
+    { key: 'expected_profit_usd', label: 'Expected $', cls: signed, render: money },
+    { key: 'realized_profit_usd', label: 'Realized $', cls: signed, render: money },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (v) =>
+        `<span class="badge ${String(v).includes('filled') ? 'good' : 'bad'}">${esc(v)}</span>`,
+    },
+    { key: 'error', label: 'Error', cls: 'reason' },
   ]);
 }
 

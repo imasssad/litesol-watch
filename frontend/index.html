@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
   <title>Arb Bot Production v1</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <!-- Unlock gate. Shown until a token is verified against /api/auth/verify. -->
+  <!-- Unlock gate. Shown until a token verifies against /api/auth/verify. -->
   <div id="gate" class="gate">
     <section class="gate-brand">
       <div class="gate-mark">
@@ -18,7 +19,7 @@
         <p class="gate-eyebrow">CEX &harr; DEX arbitrage</p>
         <h1>Every spread.<br />One view.</h1>
         <p class="gate-sub">
-          Scanner, risk limits, and kill switch — with live execution gated off
+          Scanner, risk limits and kill switch — with live execution gated off
           until you turn it on deliberately.
         </p>
       </div>
@@ -30,7 +31,7 @@
 
     <section class="gate-panel">
       <div class="gate-form">
-        <p class="gate-eyebrow">YOUR WORKSPACE AWAITS</p>
+        <p class="gate-eyebrow">Your workspace awaits</p>
         <h2>Welcome back.</h2>
         <p class="gate-sub">
           Connect to your bot to monitor spreads and manage the kill switch.
@@ -50,7 +51,10 @@
         <p id="gateError" class="gate-error" hidden></p>
 
         <hr class="gate-rule" />
-        <p class="gate-note"><span id="gateDot" class="dot"></span> <span id="gateStatus">Checking connection&hellip;</span></p>
+        <p class="gate-note">
+          <span id="gateDot" class="dot"></span>
+          <span id="gateStatus">Checking connection&hellip;</span>
+        </p>
         <p class="gate-note">&#128274; Your token stays in this browser session.</p>
       </div>
       <div class="gate-panel-foot">
@@ -62,49 +66,60 @@
 
   <!-- Dashboard. Revealed once the token verifies. -->
   <main id="app" hidden>
-    <section class="hero">
-      <div>
-        <h1>Arb Bot Production v1</h1>
-        <p>CEX ↔ DEX arbitrage scanner with live-execution gates, persistence, auth, and kill switch.</p>
+    <header class="hero">
+      <div class="hero-id">
+        <span class="gate-logo">◆</span>
+        <div>
+          <h1>Arb Bot Production v1</h1>
+          <p>CEX ↔ DEX arbitrage scanner · live-execution gates · persistence · kill switch</p>
+        </div>
       </div>
       <div class="controls">
-        <button onclick="post('/api/start')">Start</button>
+        <button class="primary" onclick="post('/api/start')">Start</button>
         <button onclick="post('/api/stop')">Stop</button>
         <button onclick="post('/api/scan-once')">Scan Once</button>
         <button class="danger" onclick="post('/api/kill-switch/on')">Kill Switch</button>
         <button onclick="post('/api/kill-switch/off')">Reset Kill</button>
         <button id="lock" class="ghost" title="Forget the token and lock this dashboard">Lock</button>
       </div>
-    </section>
+    </header>
 
-    <section class="warning">
-      <strong>Safety:</strong> live trades require both <code>LIVE_TRADING=true</code> and <code>EXECUTION_ENABLED=true</code>. Keep false until keys, wallet signing, and order sizes are fully tested.
-    </section>
+    <div class="banner safety">
+      <strong>Safety:</strong> live trades require both <code>LIVE_TRADING=true</code>
+      and <code>EXECUTION_ENABLED=true</code>. Keep them false until keys, wallet
+      signing and order sizes are fully tested.
+    </div>
 
-    <section class="warning" id="error" hidden></section>
-    <section class="warning" id="killReason" hidden></section>
-    <section class="warning" id="rateLimit" hidden></section>
+    <div class="banner danger" id="error" hidden></div>
+    <div class="banner danger" id="killReason" hidden></div>
+    <div class="banner info" id="rateLimit" hidden></div>
 
     <section class="grid" id="status"></section>
 
-    <section>
-      <h2>Venue Health</h2>
-      <pre id="health">Loading...</pre>
+    <section class="panel">
+      <div class="panel-head"><h2>Venue Health</h2></div>
+      <div class="panel-body"><pre id="health">Loading…</pre></div>
     </section>
 
-    <section>
-      <h2>Latest Quotes</h2>
-      <table id="quotes"></table>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Latest Quotes</h2><span class="count" id="quotesCount"></span>
+      </div>
+      <div class="panel-body table-scroll"><table id="quotes"></table></div>
     </section>
 
-    <section>
-      <h2>Opportunities</h2>
-      <table id="opportunities"></table>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Opportunities</h2><span class="count" id="opportunitiesCount"></span>
+      </div>
+      <div class="panel-body table-scroll"><table id="opportunities"></table></div>
     </section>
 
-    <section>
-      <h2>Trades</h2>
-      <table id="trades"></table>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Trades</h2><span class="count" id="tradesCount"></span>
+      </div>
+      <div class="panel-body table-scroll"><table id="trades"></table></div>
     </section>
   </main>
 
