@@ -203,6 +203,77 @@ interactive deploy.
 Note: a deploy restarts the container. In paper mode that is harmless; if you
 ever run live, be aware a merge will interrupt an in-flight scan.
 
+## Publishing the dashboard on the internet
+
+By default the bot binds to `127.0.0.1` and is reachable only through an SSH
+tunnel. To publish it:
+
+```bash
+cd /var/www/litesol && bash deploy/enable-public.sh
+```
+
+The script asks for a hostname, an email, and a dashboard password, then
+starts a Caddy reverse proxy in front of the bot.
+
+### What it sets up
+
+```text
+internet ──HTTPS──> Caddy :443 ──basic auth──> arb-bot:8000 (internal network)
+                                                     ▲
+                        SSH tunnel ──> 127.0.0.1:8000 ┘
+```
+
+- **Automatic HTTPS.** Caddy obtains and renews a certificate with no manual
+  steps. Certificates live in a named volume so a restart does not re-request
+  them.
+- **Basic auth on everything**, including the read-only panels. A port scanner
+  finds a password prompt, not your trading dashboard. The password is stored
+  only as a bcrypt hash.
+- **The bot is never published.** It keeps its loopback binding, so Caddy is
+  the only public route and the SSH tunnel keeps working unchanged.
+- **Security headers**: HSTS, `nosniff`, `X-Frame-Options: DENY`, a strict CSP
+  and `Referrer-Policy: no-referrer`.
+- **Separate credentials.** Settings go in `deploy/caddy.env`, not
+  `backend/.env` — the TLS proxy has no business holding your API token or
+  exchange keys. Both files are git-ignored.
+
+### Hostnames without a domain
+
+The default is an [sslip.io](https://sslip.io) hostname such as
+`bot.92-113-21-159.sslip.io`, which resolves to that IP, so a certificate can
+be issued without buying a domain.
+
+**Be aware:** every sslip.io hostname shares one Let's Encrypt
+certificate-per-registered-domain budget, so issuance there can fail through no
+fault of yours. Caddy falls back to ZeroSSL automatically, which usually
+resolves it. If certificates keep failing, use a real domain — point an A
+record at the server and re-run the script with that hostname. That is the
+durable fix, and the URL is nicer.
+
+### If it does not come up
+
+```bash
+docker compose logs -f caddy
+```
+
+In order of likelihood: certificate rate limiting (above); **port 80 blocked by
+a provider firewall** — the ACME challenge needs it open inbound, not just 443;
+or DNS not pointing at the server. The SSH tunnel keeps working throughout.
+
+### Two layers of auth
+
+The basic-auth login gets you to the page. The dashboard's own
+`API_AUTH_TOKEN` is still required for Start/Stop/Scan/Kill Switch. Losing the
+basic-auth password does not by itself give anyone control of the bot.
+
+### Reverting to tunnel-only
+
+```bash
+docker compose stop caddy && docker compose rm -f caddy
+```
+
+The bot keeps running on `127.0.0.1:8000`.
+
 ## Server hygiene
 
 - **Use SSH keys, not passwords.** Generate one locally, then append the

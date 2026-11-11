@@ -5,6 +5,7 @@
 backend/.env
 backend/.env.*
 !backend/.env.example
+deploy/caddy.env
 
 # Local databases / runtime state
 *.db

@@ -1,0 +1,47 @@
+# Public entry point for the dashboard.
+#
+# Caddy obtains and renews a Let's Encrypt certificate automatically for
+# PUBLIC_HOSTNAME, terminates TLS, enforces basic auth, and only then proxies
+# to the bot on the internal compose network. The bot itself publishes no host
+# port, so this is the only route in.
+#
+# Set in backend/.env:
+#   PUBLIC_HOSTNAME   e.g. bot.92-113-21-159.sslip.io
+#   ACME_EMAIL        for Let's Encrypt expiry notices
+#   BASIC_AUTH_USER   login name
+#   BASIC_AUTH_HASH   bcrypt hash from: docker run --rm caddy:2.8-alpine caddy hash-password --plaintext 'yourpassword'
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_HOSTNAME} {
+	encode zstd gzip
+
+	# Gate everything, including the read-only panels. A port scanner should
+	# find a password prompt, not a trading dashboard.
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		# The dashboard loads only its own CSS/JS and talks only to its own
+		# origin, so this can be strict.
+		Content-Security-Policy "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	reverse_proxy arb-bot:8000 {
+		health_uri /api/status
+		health_interval 30s
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

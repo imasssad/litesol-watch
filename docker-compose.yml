@@ -6,8 +6,9 @@ services:
     env_file:
       - backend/.env
     ports:
-      # Bound to loopback: the control API must sit behind a TLS reverse proxy,
-      # never be published straight onto a public interface.
+      # Loopback only - NOT public. Caddy reaches the app over the internal
+      # compose network instead. Keeping this published means the SSH tunnel,
+      # local curl checks and the deploy healthcheck all keep working.
       - "127.0.0.1:8000:8000"
     volumes:
       # Matches the default DATABASE_URL (sqlite+aiosqlite:///./data/arb_bot.db)
@@ -20,3 +21,28 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+
+  caddy:
+    # Public entry point. Terminates TLS with an automatic Let's Encrypt
+    # certificate and gates everything behind HTTP basic auth before a request
+    # can reach the bot.
+    image: caddy:2.8-alpine
+    depends_on:
+      - arb-bot
+    env_file:
+      # Deliberately NOT backend/.env: the TLS proxy has no business holding
+      # the API token or exchange credentials. Only the four public settings.
+      - deploy/caddy.env
+    ports:
+      - "80:80"     # needed for the ACME HTTP-01 challenge and the HTTPS redirect
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificates and ACME account keys - must persist
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
