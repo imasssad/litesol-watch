@@ -148,7 +148,10 @@ $COMPOSE up -d --build
 echo "==> Waiting for the certificate. This usually takes 10-60s."
 STATUS=000
 for _ in $(seq 1 36); do
-    STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://${HOST}/" 2>/dev/null || echo 000)"
+    # No `|| echo 000`: curl already writes 000 via -w on failure, and the
+    # fallback appended a second one, producing "000000" in the message.
+    STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://${HOST}/" 2>/dev/null)"
+    STATUS="${STATUS:-000}"
     # 401 means TLS completed and basic auth answered: that is success.
     case "$STATUS" in 200|401) break ;; esac
     sleep 5

@@ -174,6 +174,39 @@ button.danger { background: #3a1c1f; color: var(--bad); border-color: #5a2b30; }
 button.danger:hover { background: #4a2328; }
 button.ghost { background: transparent; color: var(--text-mute); }
 
+/* A disabled control must read as unavailable, not merely unstyled. */
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+}
+button:disabled:hover { background: var(--surface-3); border-color: var(--border); }
+button.primary:disabled:hover { background: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button[data-pending] { cursor: progress; opacity: 0.75; }
+
+/* Toasts: confirmation that a click actually did something. */
+.toasts {
+  position: fixed; right: 18px; bottom: 18px; z-index: 50;
+  display: flex; flex-direction: column; gap: 8px;
+  max-width: min(420px, calc(100vw - 36px));
+}
+.toast {
+  background: var(--surface-3); color: var(--text);
+  border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: var(--radius-sm); padding: 11px 14px; font-size: 13.5px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: toast-in 0.18s ease-out;
+  overflow-wrap: anywhere;
+}
+.toast.ok  { border-left-color: var(--accent); }
+.toast.bad { border-left-color: var(--bad); color: var(--bad); }
+.toast.leaving { opacity: 0; transform: translateY(6px); transition: opacity 0.3s, transform 0.3s; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* Banners -------------------------------------------------- */
 .banner {
   border-radius: var(--radius); padding: 13px 16px; margin-bottom: 14px;
@@ -295,6 +328,10 @@ td.ts { font-family: var(--mono); font-size: 11.5px; color: var(--text-mute); wh
     text-transform: uppercase; align-self: center;
   }
   td.reason, td.num, td.ts { white-space: normal; max-width: none; }
+}
+
+@media (max-width: 680px) {
+  .toasts { right: 10px; left: 10px; bottom: 10px; max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

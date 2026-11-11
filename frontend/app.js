@@ -145,7 +145,29 @@ async function probeConnection() {
 }
 
 // --- dashboard --------------------------------------------------------------
-async function post(path) {
+// --- toasts -----------------------------------------------------------------
+// A control with no feedback is unusable: Start looked identical whether the
+// scanner was already running, and Kill Switch gave no sign it had fired.
+function toast(message, kind = 'ok') {
+  const host = document.getElementById('toasts');
+  if (!host) return;
+  const el = document.createElement('div');
+  el.className = `toast ${kind}`;
+  el.textContent = message;
+  host.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 300);
+  }, 4200);
+}
+
+async function post(path, button = null) {
+  const original = button ? button.textContent : '';
+  if (button) {
+    button.disabled = true;
+    button.dataset.pending = '1';
+    button.textContent = `${button.dataset.busy || 'Working'}…`;
+  }
   try {
     const res = await fetch(path, { method: 'POST', headers: authHeaders() });
     if (res.status === 401 || res.status === 503) {
@@ -161,14 +183,40 @@ async function post(path) {
       } catch {
         /* body was not JSON */
       }
+      toast(`${res.status}${detail ? ` — ${detail}` : ''}`, 'bad');
       setError(`${path} failed: ${res.status}${detail ? ` - ${detail}` : ''}`);
     } else {
+      toast((button && button.dataset.done) || 'Done', 'ok');
       setError('');
     }
   } catch (e) {
+    toast(`Request failed: ${e.message}`, 'bad');
     setError(`${path} failed: ${e.message}`);
+  } finally {
+    if (button) {
+      button.textContent = original;
+      delete button.dataset.pending;
+      button.disabled = false;
+    }
   }
   await refresh();
+}
+
+// Buttons reflect what the bot will actually accept: Start is off while it is
+// already running, Reset Kill is off when there is nothing to reset.
+function updateControls(status) {
+  const rules = {
+    '/api/start': status.running,
+    '/api/stop': !status.running,
+    '/api/kill-switch/on': status.kill_switch,
+    '/api/kill-switch/off': !status.kill_switch,
+  };
+  document.querySelectorAll('[data-action]').forEach((btn) => {
+    if (btn.dataset.pending) return; // mid-request; leave it alone
+    const disabled = Boolean(rules[btn.dataset.action]);
+    btn.disabled = disabled;
+    btn.title = disabled ? 'Not applicable in the current state' : '';
+  });
 }
 
 function card(label, value, cls = '') {
@@ -274,6 +322,8 @@ async function refresh() {
     ].join('');
   }
 
+  updateControls(status);
+
   const healthNode = document.getElementById('health');
   if (healthNode) healthNode.textContent = JSON.stringify(health, null, 2);
 
@@ -333,6 +383,10 @@ async function refresh() {
 }
 
 // --- wiring -----------------------------------------------------------------
+document.querySelectorAll('[data-action]').forEach((btn) => {
+  btn.addEventListener('click', () => post(btn.dataset.action, btn));
+});
+
 document.getElementById('unlock').addEventListener('click', () => {
   attemptUnlock(document.getElementById('token').value.trim());
 });

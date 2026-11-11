@@ -60,12 +60,33 @@ async function metricValue(page, metric) {
 
   // control endpoints through the UI
   await page.click('button:has-text("Kill Switch")');
+  await page.waitForTimeout(400);
+  const toastText = await page.$$eval('.toast', (ns) => ns.map((n) => n.textContent).join(' / '));
+  check('action shows a confirmation toast', toastText.includes('ENGAGED'), toastText);
+
   await page.waitForTimeout(1200);
   check('kill switch engages from the UI', (await metricValue(page, 'kill-switch')) === 'ON');
+  // A control that cannot apply must read as unavailable, not just do nothing.
+  check(
+    'engage button disables once engaged',
+    await page.isDisabled('button:has-text("Kill Switch")')
+  );
 
   await page.click('button:has-text("Reset Kill")');
-  await page.waitForTimeout(1200);
+  await page.waitForTimeout(1500);
   check('kill switch resets from the UI', (await metricValue(page, 'kill-switch')) === 'OFF');
+  check(
+    'reset button disables once reset',
+    await page.isDisabled('button:has-text("Reset Kill")')
+  );
+
+  await page.click('button:has-text("Stop")');
+  await page.waitForTimeout(1500);
+  check('stop disables itself and re-enables start', 
+    (await page.isDisabled('button:has-text("Stop")')) &&
+    !(await page.isDisabled('button:has-text("Start")')));
+  await page.click('button:has-text("Start")');
+  await page.waitForTimeout(1500);
 
   // token survives a reload, then Lock re-gates
   await page.reload({ waitUntil: 'networkidle' });
