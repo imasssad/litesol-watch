@@ -333,3 +333,34 @@ def test_enable_public_resolves_before_deciding_tls_mode():
     assigned = script.index('RESOLVED="$(getent hosts')
     used = script.index('if [ -z "$RESOLVED" ]; then')
     assert assigned < used, "RESOLVED is read before it is assigned"
+
+
+def test_no_health_check_points_at_an_authenticated_endpoint():
+    """Health probes must use /api/ping, not /api/status.
+
+    When every data endpoint became authenticated, seven health checks still
+    polled /api/status. The worst was Caddy's active check: a 401 makes it
+    mark the backend down and serve 502 to every visitor.
+    """
+    probes = {
+        "docker-compose.yml": REPO_ROOT / "docker-compose.yml",
+        "Caddyfile": REPO_ROOT / "deploy" / "Caddyfile",
+        "ci.yml": REPO_ROOT / ".github" / "workflows" / "ci.yml",
+    }
+    for name, path in probes.items():
+        for line in path.read_text().splitlines():
+            code = line.split("#", 1)[0]
+            if "health" in line.lower() or "curl -sf" in code:
+                assert "/api/status" not in code, (
+                    f"{name}: health check uses the authenticated /api/status"
+                )
+
+    # The shell scripts may read /api/status, but only with a token.
+    for script in ["bootstrap.sh", "pull-deploy.sh"]:
+        text = (REPO_ROOT / "deploy" / script).read_text()
+        for line in text.splitlines():
+            code = line.split("#", 1)[0]
+            if "/api/status" in code:
+                assert "X-API-Token" in code, f"{script}: unauthenticated /api/status call"
+            if "curl -sf" in code and "/api/" in code:
+                assert "/api/ping" in code, f"{script}: liveness probe must use /api/ping"

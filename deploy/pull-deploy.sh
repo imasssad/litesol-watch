@@ -64,9 +64,11 @@ $COMPOSE up -d --build
 # --- health gate ----------------------------------------------------------
 log "waiting for the API"
 for _ in $(seq 1 45); do
-    if curl -sf -o /dev/null http://127.0.0.1:8000/api/status; then
+    if curl -sf -o /dev/null http://127.0.0.1:8000/api/ping; then
         log "UP"
-        curl -s http://127.0.0.1:8000/api/status
+        # /api/status needs the token now; /api/ping is the liveness probe.
+        DEPLOY_TOKEN="$(grep '^API_AUTH_TOKEN=' backend/.env | head -1 | cut -d= -f2-)"
+        curl -s -H "X-API-Token: ${DEPLOY_TOKEN}" http://127.0.0.1:8000/api/status
         echo
         log "deploy succeeded: $TARGET"
         exit 0
@@ -84,7 +86,7 @@ if [ "$PREVIOUS" != "$TARGET" ]; then
     git reset --hard "$PREVIOUS"
     $COMPOSE up -d --build
     for _ in $(seq 1 45); do
-        if curl -sf -o /dev/null http://127.0.0.1:8000/api/status; then
+        if curl -sf -o /dev/null http://127.0.0.1:8000/api/ping; then
             echo "Rolled back to $PREVIOUS and the API is up." >&2
             exit 1
         fi

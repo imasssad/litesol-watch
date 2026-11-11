@@ -36,7 +36,9 @@
 	}
 
 	reverse_proxy arb-bot:8000 {
-		health_uri /api/status
+		# /api/ping, not /api/status: status needs the token now, and a 401
+		# would make Caddy mark the backend down and serve 502 to everyone.
+		health_uri /api/ping
 		health_interval 30s
 	}
 
