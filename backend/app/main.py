@@ -95,6 +95,8 @@ async def status():
         "running": scanner.running,
         "rate_limited": scanner.rate_limited,
         "last_scan_error": scanner.last_scan_error,
+        "scan_interval_seconds": settings.effective_scan_interval_seconds,
+        "scan_interval_was_raised": settings.scan_interval_was_raised,
         "kill_switch": scanner.risk.kill_switch,
         "kill_switch_reason": scanner.risk.kill_switch_reason,
         "pair": settings.pair,

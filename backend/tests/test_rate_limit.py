@@ -31,6 +31,7 @@ async def test_throttling_does_not_count_as_a_failure(monkeypatch):
     from app.db.init_db import init_db
 
     await init_db()
+    monkeypatch.setattr(settings, "dex_venue", "mock")  # no rate-limit floor
     monkeypatch.setattr(settings, "scan_interval_seconds", 0.01)
     monkeypatch.setattr(settings, "max_consecutive_failures", 2)
 
@@ -70,6 +71,7 @@ async def test_a_scan_error_does_not_trip_the_kill_switch(monkeypatch):
     from app.db.init_db import init_db
 
     await init_db()
+    monkeypatch.setattr(settings, "dex_venue", "mock")  # no rate-limit floor
     monkeypatch.setattr(settings, "scan_interval_seconds", 0.01)
     monkeypatch.setattr(settings, "max_consecutive_failures", 2)
 
@@ -113,6 +115,7 @@ async def test_a_good_scan_clears_the_recorded_error(monkeypatch):
     from app.db.init_db import init_db
 
     await init_db()
+    monkeypatch.setattr(settings, "dex_venue", "mock")  # no rate-limit floor
     monkeypatch.setattr(settings, "scan_interval_seconds", 0.01)
 
     scanner = ArbScanner()
@@ -142,6 +145,7 @@ async def test_backoff_grows_and_is_capped(monkeypatch):
     from app.db.init_db import init_db
 
     await init_db()
+    monkeypatch.setattr(settings, "dex_venue", "mock")  # no rate-limit floor
     monkeypatch.setattr(settings, "scan_interval_seconds", 100.0)
 
     scanner = ArbScanner()
@@ -169,6 +173,7 @@ async def test_backoff_clears_after_a_good_scan(monkeypatch):
     from app.db.init_db import init_db
 
     await init_db()
+    monkeypatch.setattr(settings, "dex_venue", "mock")  # no rate-limit floor
     monkeypatch.setattr(settings, "scan_interval_seconds", 0.01)
 
     scanner = ArbScanner()

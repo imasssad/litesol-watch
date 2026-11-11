@@ -324,6 +324,10 @@ async function refresh() {
       card('Kill Switch', status.kill_switch ? 'ON' : 'OFF', status.kill_switch ? 'dangerCard' : ''),
       card('Pair', status.pair),
       card('Min Spread', `${status.min_net_spread_bps} bps`),
+      card(
+        'Scan Every',
+        `${status.scan_interval_seconds}s${status.scan_interval_was_raised ? ' *' : ''}`
+      ),
       card('Trade Size', `$${status.trade_size_usd}`),
       card(
         'Daily PnL',
@@ -349,6 +353,13 @@ async function refresh() {
 
   // A venue being unreachable is not a trading failure: no order is
   // attempted, so the bot keeps retrying instead of halting.
+  show(
+    'scanFloor',
+    status.scan_interval_was_raised
+      ? `Scan interval raised to ${status.scan_interval_seconds}s to stay inside Jupiter's keyless rate limit (2 quote calls per scan). Set JUPITER_API_KEY and use api.jup.ag to scan faster.`
+      : ''
+  );
+
   show(
     'rateLimit',
     status.rate_limited && status.last_scan_error
