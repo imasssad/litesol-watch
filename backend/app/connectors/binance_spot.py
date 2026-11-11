@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.config import settings
-from app.connectors.base import ExecutionConnector
+from app.connectors.base import ExecutionConnector, RateLimited
 from app.models.schemas import OrderResult, Quote, Side
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,14 @@ class BinanceSpotConnector(ExecutionConnector):
     async def get_quote(self, pair: str) -> Quote:
         symbol = settings.symbol_binance
         r = await self.client.get("/api/v3/ticker/bookTicker", params={"symbol": symbol})
+        # 429 = rate limited, 418 = banned for ignoring 429s. Both mean back off.
+        if r.status_code in (429, 418):
+            raw = r.headers.get("Retry-After", "")
+            try:
+                retry_after = float(raw) if raw else None
+            except ValueError:
+                retry_after = None
+            raise RateLimited(self.venue, retry_after=retry_after)
         r.raise_for_status()
         data = r.json()
         bid = float(data["bidPrice"])

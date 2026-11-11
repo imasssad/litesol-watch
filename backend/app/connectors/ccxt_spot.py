@@ -5,7 +5,7 @@ from typing import Any
 import ccxt.async_support as ccxt
 
 from app.config import settings
-from app.connectors.base import ExecutionConnector
+from app.connectors.base import ExecutionConnector, RateLimited
 from app.models.schemas import OrderResult, Quote, Side
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,12 @@ class CcxtSpotConnector(ExecutionConnector):
         return self.exchange.markets
 
     async def get_quote(self, pair: str) -> Quote:
+        try:
+            return await self._get_quote(pair)
+        except ccxt.RateLimitExceeded as exc:
+            raise RateLimited(self.venue, message=str(exc)) from exc
+
+    async def _get_quote(self, pair: str) -> Quote:
         ticker = await self.exchange.fetch_ticker(pair)
         bid = ticker.get("bid")
         ask = ticker.get("ask")

@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime
 
 from app.config import settings
-from app.connectors.base import MarketConnector
+from app.connectors.base import MarketConnector, RateLimited
 from app.connectors.factory import build_cex_connector, build_dex_connector
 from app.engine.executor import TradeExecutor
 from app.engine.pricing import build_opportunity
@@ -19,6 +19,10 @@ from app.services.repository import (
 
 logger = logging.getLogger(__name__)
 
+# Ceiling for rate-limit backoff, so a throttled venue cannot stall the
+# scanner indefinitely.
+MAX_BACKOFF_SECONDS = 300.0
+
 
 class ArbScanner:
     def __init__(self):
@@ -33,6 +37,7 @@ class ArbScanner:
         self._dex: MarketConnector | None = None
         self._executor: TradeExecutor | None = None
         self._persisted_state: tuple[bool, str | None] | None = None
+        self._rate_limit_backoff = 0
         self._state_restored = False
 
     # Connectors are built lazily so that importing this module cannot fail and
@@ -134,12 +139,34 @@ class ArbScanner:
                 logger.exception("failed to close connector %s", connector.venue)
         self._cex = self._dex = self._executor = None
 
+    @property
+    def rate_limited(self) -> bool:
+        return self._rate_limit_backoff > 0
+
     async def _loop(self) -> None:
         while self.running:
+            delay = settings.scan_interval_seconds
             try:
                 await self.scan_once()
+                self._rate_limit_backoff = 0
             except asyncio.CancelledError:
                 raise
+            except RateLimited as exc:
+                # Being throttled is not a trading failure: we are blind, not
+                # broken. Back off exponentially and retry rather than burning
+                # the consecutive-failure budget and tripping a kill switch
+                # that a human then has to reset.
+                self._rate_limit_backoff = min(self._rate_limit_backoff + 1, 6)
+                delay = exc.retry_after or min(
+                    settings.scan_interval_seconds * (2**self._rate_limit_backoff),
+                    MAX_BACKOFF_SECONDS,
+                )
+                logger.warning(
+                    "%s rate limited this client; backing off %.0fs "
+                    "(not counted as a trading failure)",
+                    exc.venue,
+                    delay,
+                )
             except Exception as exc:
                 # Previously swallowed silently, which hid venue outages and
                 # config errors behind a kill switch with no explanation.
@@ -149,7 +176,7 @@ class ArbScanner:
                 await self.sync_risk_state()
             except Exception:
                 logger.exception("failed to persist risk state")
-            await asyncio.sleep(settings.scan_interval_seconds)
+            await asyncio.sleep(delay)
 
     async def health(self) -> dict:
         cex: dict | BaseException

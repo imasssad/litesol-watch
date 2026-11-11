@@ -111,3 +111,24 @@ def test_bootstrap_chowns_data_to_the_container_uid():
         f"bootstrap.sh must chown data/ to uid {uid} to match the Dockerfile"
     )
     assert "chown" in bootstrap and "data" in bootstrap
+
+
+def test_auth_verify_endpoint_exists_and_is_protected():
+    """The unlock screen needs a side-effect-free way to test a token.
+
+    Every other protected endpoint changes state (start, stop, scan, kill
+    switch), so none of them is safe to call just to validate a token.
+    """
+    main = (REPO_ROOT / "backend" / "app" / "main.py").read_text()
+    assert "/api/auth/verify" in main
+    verify = main[main.index("/api/auth/verify") :]
+    assert "Depends(require_auth)" in verify[:200]
+
+
+def test_dashboard_token_is_not_persisted_to_local_storage():
+    """sessionStorage only: the token must not outlive the browser tab."""
+    app_js = (REPO_ROOT / "frontend" / "app.js").read_text()
+    assert "sessionStorage.getItem" in app_js
+    # Match member access, not the word: a comment explains the choice.
+    assert "localStorage." not in app_js
+    assert "localStorage[" not in app_js

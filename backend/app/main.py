@@ -82,6 +82,7 @@ async def status():
         "live_execution_allowed": settings.live_execution_allowed,
         "auth_configured": settings.auth_configured,
         "running": scanner.running,
+        "rate_limited": scanner.rate_limited,
         "kill_switch": scanner.risk.kill_switch,
         "kill_switch_reason": scanner.risk.kill_switch_reason,
         "pair": settings.pair,
@@ -92,6 +93,17 @@ async def status():
         "failed_trade_count": scanner.risk.failed_trade_count,
         "trade_count": len(scanner.trades),
     }
+
+
+@app.get("/api/auth/verify", dependencies=[Depends(require_auth)])
+async def auth_verify():
+    """Check a token without causing any side effect.
+
+    The dashboard's unlock screen calls this. Every other protected endpoint
+    changes state (starts, stops, scans, toggles the kill switch), so none of
+    them is safe to use merely to test a token.
+    """
+    return {"ok": True}
 
 
 @app.get("/api/health")

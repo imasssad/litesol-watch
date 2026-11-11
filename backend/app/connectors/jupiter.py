@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import httpx
 
 from app.config import settings
-from app.connectors.base import ExecutionConnector
+from app.connectors.base import ExecutionConnector, RateLimited
 from app.models.schemas import OrderResult, Quote, Side
 
 # SPL mint addresses. Each is a 32-byte base58 pubkey; verify any addition
@@ -31,6 +31,19 @@ class JupiterConnector(ExecutionConnector):
 
     async def aclose(self) -> None:
         await self.client.aclose()
+
+    async def _get_json(self, url: str, params: dict) -> dict:
+        """GET that turns a 429 into RateLimited, honouring Retry-After."""
+        r = await self.client.get(url, params=params)
+        if r.status_code == 429:
+            raw = r.headers.get("Retry-After", "")
+            try:
+                retry_after = float(raw) if raw else None
+            except ValueError:
+                retry_after = None
+            raise RateLimited(self.venue, retry_after=retry_after)
+        r.raise_for_status()
+        return r.json()
 
     @staticmethod
     def _asset(symbol: str) -> tuple[str, int]:
@@ -68,9 +81,7 @@ class JupiterConnector(ExecutionConnector):
             "amount": amount,
             "slippageBps": int(settings.max_slippage_bps),
         }
-        buy_r = await self.client.get(settings.jupiter_quote_url, params=buy_params)
-        buy_r.raise_for_status()
-        buy_data = buy_r.json()
+        buy_data = await self._get_json(settings.jupiter_quote_url, buy_params)
         out_base = float(buy_data["outAmount"]) / (10**base_dec)
         if out_base <= MIN_OUT:
             raise RuntimeError(f"{self.venue} returned no routable size for {pair}")
@@ -83,9 +94,7 @@ class JupiterConnector(ExecutionConnector):
             "amount": base_amount,
             "slippageBps": int(settings.max_slippage_bps),
         }
-        sell_r = await self.client.get(settings.jupiter_quote_url, params=sell_params)
-        sell_r.raise_for_status()
-        sell_data = sell_r.json()
+        sell_data = await self._get_json(settings.jupiter_quote_url, sell_params)
         out_quote = float(sell_data["outAmount"]) / (10**quote_dec)
         bid = out_quote / out_base
         if bid <= 0 or ask <= 0:

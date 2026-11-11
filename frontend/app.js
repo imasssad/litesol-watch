@@ -1,17 +1,43 @@
+// --- token handling ---------------------------------------------------------
+// sessionStorage, not localStorage: the token survives a page refresh in this
+// tab but is gone when the tab closes, and never reaches another tab or disk
+// profile. Every read is wrapped because storage can throw in private mode.
+const TOKEN_KEY = 'arbbot.token';
+
+function readToken() {
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeToken(value) {
+  try {
+    if (value) sessionStorage.setItem(TOKEN_KEY, value);
+    else sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage unavailable; the in-memory value below still works */
+  }
+}
+
+let token = readToken();
+let pollTimer = null;
+
+function authHeaders() {
+  return token ? { 'X-API-Token': token } : {};
+}
+
+// --- helpers ----------------------------------------------------------------
 async function getJson(path) {
   const res = await fetch(path);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
   return res.json();
 }
 
-function authHeaders() {
-  const token = document.getElementById('token')?.value;
-  return token ? { 'X-API-Token': token } : {};
-}
-
-// Venue names, reasons and error strings are built from remote API responses and
-// exception text. Interpolating them into innerHTML unescaped let a venue (or
-// anything that can shape an error message) inject markup into the dashboard.
+// Venue names, reasons and error strings are built from remote API responses
+// and exception text. Interpolating them into innerHTML unescaped let a venue
+// (or anything that can shape an error message) inject markup here.
 function esc(value) {
   if (value === null || value === undefined) return '';
   return String(value)
@@ -22,8 +48,8 @@ function esc(value) {
     .replaceAll("'", '&#39;');
 }
 
-function setError(message) {
-  const node = document.getElementById('error');
+function show(id, message) {
+  const node = document.getElementById(id);
   if (!node) return;
   if (!message) {
     node.hidden = true;
@@ -34,9 +60,100 @@ function setError(message) {
   node.textContent = message;
 }
 
+const setError = (m) => show('error', m);
+
+// --- gate -------------------------------------------------------------------
+function showGate(message) {
+  document.getElementById('gate').hidden = false;
+  document.getElementById('app').hidden = true;
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  show('gateError', message || '');
+}
+
+function showApp() {
+  document.getElementById('gate').hidden = true;
+  document.getElementById('app').hidden = false;
+  refresh();
+  if (!pollTimer) {
+    pollTimer = setInterval(() => {
+      refresh().catch((e) => setError(`Dashboard refresh failed: ${e.message}`));
+    }, 3000);
+  }
+}
+
+// Verifies a token with no side effect. Every other protected endpoint changes
+// state, so none of them can be used merely to test a token.
+async function verifyToken(candidate) {
+  const res = await fetch('/api/auth/verify', {
+    headers: candidate ? { 'X-API-Token': candidate } : {},
+  });
+  if (res.ok) return { ok: true };
+  let detail = '';
+  try {
+    detail = (await res.json())?.detail ?? '';
+  } catch {
+    /* body was not JSON */
+  }
+  return { ok: false, status: res.status, detail };
+}
+
+async function attemptUnlock(candidate) {
+  if (!candidate) {
+    show('gateError', 'Enter the API token from backend/.env on the server.');
+    return;
+  }
+  const button = document.getElementById('unlock');
+  button.disabled = true;
+  button.textContent = 'Connecting…';
+  try {
+    const result = await verifyToken(candidate);
+    if (result.ok) {
+      token = candidate;
+      writeToken(candidate);
+      show('gateError', '');
+      showApp();
+      return;
+    }
+    if (result.status === 503) {
+      show('gateError', result.detail || 'Control endpoints are disabled: API_AUTH_TOKEN is not set on the server.');
+    } else {
+      show('gateError', 'That token was rejected. Check API_AUTH_TOKEN in backend/.env.');
+    }
+  } catch (e) {
+    show('gateError', `Could not reach the bot: ${e.message}`);
+  } finally {
+    button.disabled = false;
+    button.innerHTML = 'Open workspace <span aria-hidden="true">&rarr;</span>';
+  }
+}
+
+async function probeConnection() {
+  const dot = document.getElementById('gateDot');
+  try {
+    const status = await getJson('/api/status');
+    dot.className = 'dot online';
+    document.getElementById('gateStatus').textContent = status.live_execution_allowed
+      ? 'Bot online · LIVE EXECUTION ENABLED'
+      : 'Bot online · paper mode';
+  } catch {
+    dot.className = 'dot offline';
+    document.getElementById('gateStatus').textContent = 'Bot unreachable — is the container running?';
+  }
+}
+
+// --- dashboard --------------------------------------------------------------
 async function post(path) {
   try {
     const res = await fetch(path, { method: 'POST', headers: authHeaders() });
+    if (res.status === 401 || res.status === 503) {
+      token = '';
+      writeToken('');
+      showGate('Your token is no longer accepted. Paste it again.');
+      return;
+    }
     if (!res.ok) {
       let detail = '';
       try {
@@ -93,8 +210,8 @@ async function refresh() {
       getJson('/api/trades'),
     ]);
   } catch (e) {
-    // Without this the first failed poll threw out of the interval callback and
-    // the dashboard froze on stale numbers with no indication why.
+    // Without this, the first failed poll threw out of the interval callback
+    // and the dashboard froze on stale numbers with no indication why.
     setError(`Dashboard refresh failed: ${e.message}`);
     return;
   }
@@ -110,11 +227,6 @@ async function refresh() {
       ),
       card('Running', status.running ? 'Yes' : 'No'),
       card('Kill Switch', status.kill_switch ? 'ON' : 'OFF', status.kill_switch ? 'dangerCard' : ''),
-      card(
-        'Auth',
-        status.auth_configured ? 'Configured' : 'NOT SET',
-        status.auth_configured ? '' : 'dangerCard'
-      ),
       card('Pair', status.pair),
       card('Min Spread', `${status.min_net_spread_bps} bps`),
       card('Trade Size', `$${status.trade_size_usd}`),
@@ -126,16 +238,19 @@ async function refresh() {
   const healthNode = document.getElementById('health');
   if (healthNode) healthNode.textContent = JSON.stringify(health, null, 2);
 
-  const killReason = document.getElementById('killReason');
-  if (killReason) {
-    if (status.kill_switch && status.kill_switch_reason) {
-      killReason.hidden = false;
-      killReason.textContent = `Kill switch reason: ${status.kill_switch_reason}`;
-    } else {
-      killReason.hidden = true;
-      killReason.textContent = '';
-    }
-  }
+  show(
+    'killReason',
+    status.kill_switch && status.kill_switch_reason
+      ? `Kill switch reason: ${status.kill_switch_reason}`
+      : ''
+  );
+
+  show(
+    'rateLimit',
+    status.rate_limited
+      ? 'A venue is rate limiting this client. The scanner is backing off and will retry — this is not counted as a trading failure.'
+      : ''
+  );
 
   table('quotes', quotes, [
     { key: 'venue', label: 'Venue' },
@@ -173,7 +288,38 @@ async function refresh() {
   ]);
 }
 
-refresh();
-setInterval(() => {
-  refresh().catch((e) => setError(`Dashboard refresh failed: ${e.message}`));
-}, 3000);
+// --- wiring -----------------------------------------------------------------
+document.getElementById('unlock').addEventListener('click', () => {
+  attemptUnlock(document.getElementById('token').value.trim());
+});
+
+document.getElementById('token').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') attemptUnlock(e.target.value.trim());
+});
+
+document.getElementById('toggleToken').addEventListener('click', () => {
+  const input = document.getElementById('token');
+  const hidden = input.type === 'password';
+  input.type = hidden ? 'text' : 'password';
+  document.getElementById('toggleToken').textContent = hidden ? 'Hide' : 'Show';
+});
+
+document.getElementById('lock').addEventListener('click', () => {
+  token = '';
+  writeToken('');
+  document.getElementById('token').value = '';
+  showGate('');
+  probeConnection();
+});
+
+// On load: reuse a token already verified in this tab, otherwise show the gate.
+(async () => {
+  probeConnection();
+  setInterval(probeConnection, 10000);
+  if (token && (await verifyToken(token)).ok) showApp();
+  else {
+    token = '';
+    writeToken('');
+    showGate('');
+  }
+})();

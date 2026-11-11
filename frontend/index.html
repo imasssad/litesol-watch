@@ -7,19 +7,73 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <main>
+  <!-- Unlock gate. Shown until a token is verified against /api/auth/verify. -->
+  <div id="gate" class="gate">
+    <section class="gate-brand">
+      <div class="gate-mark">
+        <span class="gate-logo">◆</span>
+        <span class="gate-wordmark">ARB BOT</span>
+      </div>
+      <div class="gate-pitch">
+        <p class="gate-eyebrow">CEX &harr; DEX arbitrage</p>
+        <h1>Every spread.<br />One view.</h1>
+        <p class="gate-sub">
+          Scanner, risk limits, and kill switch — with live execution gated off
+          until you turn it on deliberately.
+        </p>
+      </div>
+      <div class="gate-foot">
+        <span>PAPER BY DEFAULT</span>
+        <span>01 / ARB BOT</span>
+      </div>
+    </section>
+
+    <section class="gate-panel">
+      <div class="gate-form">
+        <p class="gate-eyebrow">YOUR WORKSPACE AWAITS</p>
+        <h2>Welcome back.</h2>
+        <p class="gate-sub">
+          Connect to your bot to monitor spreads and manage the kill switch.
+        </p>
+
+        <label class="gate-label" for="token">Admin access token</label>
+        <div class="gate-input">
+          <input id="token" type="password" autocomplete="current-password"
+                 placeholder="Paste API_AUTH_TOKEN" spellcheck="false" />
+          <button type="button" id="toggleToken" class="gate-reveal">Show</button>
+        </div>
+
+        <button type="button" id="unlock" class="gate-cta">
+          Open workspace <span aria-hidden="true">&rarr;</span>
+        </button>
+
+        <p id="gateError" class="gate-error" hidden></p>
+
+        <hr class="gate-rule" />
+        <p class="gate-note"><span id="gateDot" class="dot"></span> <span id="gateStatus">Checking connection&hellip;</span></p>
+        <p class="gate-note">&#128274; Your token stays in this browser session.</p>
+      </div>
+      <div class="gate-panel-foot">
+        <span>ARB BOT</span>
+        <span>Scan. Validate. Halt.</span>
+      </div>
+    </section>
+  </div>
+
+  <!-- Dashboard. Revealed once the token verifies. -->
+  <main id="app" hidden>
     <section class="hero">
       <div>
         <h1>Arb Bot Production v1</h1>
         <p>CEX ↔ DEX arbitrage scanner with live-execution gates, persistence, auth, and kill switch.</p>
       </div>
       <div class="controls">
-        <input id="token" type="password" placeholder="API token" />
         <button onclick="post('/api/start')">Start</button>
         <button onclick="post('/api/stop')">Stop</button>
         <button onclick="post('/api/scan-once')">Scan Once</button>
         <button class="danger" onclick="post('/api/kill-switch/on')">Kill Switch</button>
         <button onclick="post('/api/kill-switch/off')">Reset Kill</button>
+        <button id="lock" class="ghost" title="Forget the token and lock this dashboard">Lock</button>
       </div>
     </section>
 
@@ -29,6 +83,7 @@
 
     <section class="warning" id="error" hidden></section>
     <section class="warning" id="killReason" hidden></section>
+    <section class="warning" id="rateLimit" hidden></section>
 
     <section class="grid" id="status"></section>
 
@@ -52,6 +107,7 @@
       <table id="trades"></table>
     </section>
   </main>
+
   <script src="/static/app.js"></script>
 </body>
 </html>
