@@ -395,3 +395,12 @@ def test_setup_cicd_pins_the_key_to_a_forced_command():
         "no-pty",
     ]:
         assert restriction in script, f"deploy key must carry {restriction}"
+
+
+def test_the_favicon_stays_public():
+    """Every data endpoint needs the token, but the tab icon must not - the
+    browser fetches it before anyone has signed in."""
+    main = (REPO_ROOT / "backend" / "app" / "main.py").read_text()
+    decorator = main[main.index('"/favicon.ico"') : main.index('"/favicon.ico"') + 90]
+    assert "require_auth" not in decorator
+    assert (REPO_ROOT / "frontend" / "favicon.svg").is_file()

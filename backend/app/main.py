@@ -73,6 +73,15 @@ async def index():
     return FileResponse(str(index_file))
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Browsers request /favicon.ico at the root whatever the <link> says."""
+    icon = FRONTEND_DIR / "favicon.svg"
+    if not icon.is_file():
+        raise HTTPException(status_code=404, detail="no favicon")
+    return FileResponse(str(icon), media_type="image/svg+xml")
+
+
 @app.get("/api/ping")
 async def ping():
     """Unauthenticated liveness probe.
