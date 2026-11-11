@@ -59,7 +59,14 @@ async def test_throttling_does_not_count_as_a_failure(monkeypatch):
     assert scanner.rate_limited is True
 
 
-async def test_a_real_error_still_counts_as_a_failure(monkeypatch):
+async def test_a_scan_error_does_not_trip_the_kill_switch(monkeypatch):
+    """Failing to READ prices is not a trading failure.
+
+    Jupiter returned HTTP 500 in production - its outage - and three of those
+    halted the bot behind a kill switch a human had to reset. Being unable to
+    scan carries no exposure: no order is attempted. Execution failures still
+    count; see test_executor.py.
+    """
     from app.db.init_db import init_db
 
     await init_db()
@@ -67,15 +74,17 @@ async def test_a_real_error_still_counts_as_a_failure(monkeypatch):
     monkeypatch.setattr(settings, "max_consecutive_failures", 2)
 
     scanner = ArbScanner()
+    attempts = []
 
-    async def broken():
-        raise RuntimeError("venue returned garbage")
+    async def venue_500():
+        attempts.append(1)
+        raise RuntimeError("Server error '500 Internal Server Error' from the venue")
 
-    monkeypatch.setattr(scanner, "scan_once", broken)
+    monkeypatch.setattr(scanner, "scan_once", venue_500)
 
     scanner.running = True
     task = asyncio.create_task(scanner._loop())
-    await asyncio.sleep(0.15)
+    await asyncio.sleep(0.2)
     scanner.running = False
     task.cancel()
     try:
@@ -83,7 +92,50 @@ async def test_a_real_error_still_counts_as_a_failure(monkeypatch):
     except asyncio.CancelledError:
         pass
 
-    assert scanner.risk.kill_switch is True, "genuine errors must still halt the bot"
+    assert len(attempts) >= 2, "scanner should keep retrying through a venue outage"
+    assert scanner.risk.kill_switch is False, "a venue outage must not halt the bot"
+    assert scanner.risk.failed_trade_count == 0
+    assert scanner.last_scan_error is not None
+    assert "500" in scanner.last_scan_error
+
+
+async def test_execution_failures_still_trip_the_kill_switch():
+    """The counterpart: money at risk still halts the bot."""
+    from app.engine.risk import RiskEngine
+
+    risk = RiskEngine()
+    for _ in range(settings.max_consecutive_failures):
+        risk.record_failure("order rejected by venue")
+    assert risk.kill_switch is True
+
+
+async def test_a_good_scan_clears_the_recorded_error(monkeypatch):
+    from app.db.init_db import init_db
+
+    await init_db()
+    monkeypatch.setattr(settings, "scan_interval_seconds", 0.01)
+
+    scanner = ArbScanner()
+    calls = {"n": 0}
+
+    async def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("venue hiccup")
+        return None
+
+    monkeypatch.setattr(scanner, "scan_once", flaky)
+    scanner.running = True
+    task = asyncio.create_task(scanner._loop())
+    await asyncio.sleep(0.3)
+    scanner.running = False
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert scanner.last_scan_error is None, "a successful scan should clear it"
 
 
 async def test_backoff_grows_and_is_capped(monkeypatch):

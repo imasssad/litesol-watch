@@ -38,6 +38,7 @@ class ArbScanner:
         self._executor: TradeExecutor | None = None
         self._persisted_state: tuple[bool, str | None] | None = None
         self._rate_limit_backoff = 0
+        self._last_scan_error: str | None = None
         self._state_restored = False
 
     # Connectors are built lazily so that importing this module cannot fail and
@@ -143,35 +144,51 @@ class ArbScanner:
     def rate_limited(self) -> bool:
         return self._rate_limit_backoff > 0
 
+    @property
+    def last_scan_error(self) -> str | None:
+        """Why the most recent scan failed, if it did. Cleared by a good scan."""
+        return self._last_scan_error
+
+    def _note_scan_failure(self, reason: str) -> None:
+        self._rate_limit_backoff = min(self._rate_limit_backoff + 1, 6)
+        self._last_scan_error = reason
+
+    def _backoff_delay(self) -> float:
+        return min(
+            settings.scan_interval_seconds * (2**self._rate_limit_backoff),
+            MAX_BACKOFF_SECONDS,
+        )
+
     async def _loop(self) -> None:
         while self.running:
             delay = settings.scan_interval_seconds
             try:
                 await self.scan_once()
                 self._rate_limit_backoff = 0
+                self._last_scan_error = None
             except asyncio.CancelledError:
                 raise
             except RateLimited as exc:
-                # Being throttled is not a trading failure: we are blind, not
-                # broken. Back off exponentially and retry rather than burning
-                # the consecutive-failure budget and tripping a kill switch
-                # that a human then has to reset.
-                self._rate_limit_backoff = min(self._rate_limit_backoff + 1, 6)
-                delay = exc.retry_after or min(
-                    settings.scan_interval_seconds * (2**self._rate_limit_backoff),
-                    MAX_BACKOFF_SECONDS,
-                )
+                self._note_scan_failure(f"{exc.venue} rate limited this client")
+                delay = exc.retry_after or self._backoff_delay()
+                logger.warning("%s rate limited; backing off %.0fs", exc.venue, delay)
+            except Exception as exc:  # noqa: BLE001 - a scan must never kill the loop
+                # A failed scan means we cannot READ prices. That is not a
+                # trading failure and must not trip the kill switch: being
+                # blind carries no exposure, while halting demands a human to
+                # reset something the venue caused. Jupiter returning 500 is
+                # its outage, not a reason to stop the bot.
+                #
+                # record_failure() stays for EXECUTION failures, where money
+                # is actually at risk - see TradeExecutor.
+                self._note_scan_failure(f"{type(exc).__name__}: {exc}")
+                delay = self._backoff_delay()
                 logger.warning(
-                    "%s rate limited this client; backing off %.0fs "
-                    "(not counted as a trading failure)",
-                    exc.venue,
+                    "scan failed (%s); backing off %.0fs. Not counted as a "
+                    "trading failure - no order was attempted.",
+                    exc,
                     delay,
                 )
-            except Exception as exc:
-                # Previously swallowed silently, which hid venue outages and
-                # config errors behind a kill switch with no explanation.
-                logger.exception("scan failed")
-                self.risk.record_failure(f"scan error: {exc}")
             try:
                 await self.sync_risk_state()
             except Exception:
