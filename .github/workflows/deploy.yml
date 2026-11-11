@@ -1,0 +1,86 @@
+name: Deploy
+
+# Auto-deploys to the server when a PR merges to main (a merge is a push to
+# main). The full CI suite runs first and a failure blocks the deploy.
+#
+# Requires, in repo settings:
+#   Variables: DEPLOY_ENABLED = true
+#   Secrets:   DEPLOY_HOST, DEPLOY_PORT, DEPLOY_USER,
+#              DEPLOY_SSH_KEY, DEPLOY_KNOWN_HOSTS
+# Without DEPLOY_ENABLED the deploy job is skipped, so the workflow is inert
+# until you opt in. See deploy/README.md for the hardened key setup.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never let two deploys touch the server at once; let an in-flight one finish.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to server
+    needs: ci
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check deploy secrets are present
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          [ -n "$HOST" ]  || missing="$missing DEPLOY_HOST"
+          [ -n "$USER" ]  || missing="$missing DEPLOY_USER"
+          [ -n "$KEY" ]   || missing="$missing DEPLOY_SSH_KEY"
+          [ -n "$KNOWN" ] || missing="$missing DEPLOY_KNOWN_HOSTS"
+          if [ -n "$missing" ]; then
+            echo "::error::DEPLOY_ENABLED is true but these secrets are unset:$missing"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host key: without this, StrictHostKeyChecking would either
+          # block the job or accept whatever answers, inviting a MITM.
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          PORT: ${{ secrets.DEPLOY_PORT }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # The server's authorized_keys pins this key to a forced command
+          # (deploy/pull-deploy.sh), so the command sent here is advisory only
+          # and the key cannot be used for an interactive shell.
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              -o PasswordAuthentication=no \
+              -o ConnectTimeout=20 \
+              -p "${PORT:-22}" \
+              "$USER@$HOST" \
+              "deploy ${GITHUB_SHA}"
+
+      - name: Clean up key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

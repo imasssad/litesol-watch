@@ -132,3 +132,38 @@ def test_dashboard_token_is_not_persisted_to_local_storage():
     # Match member access, not the word: a comment explains the choice.
     assert "localStorage." not in app_js
     assert "localStorage[" not in app_js
+
+
+def test_ci_workflow_runs_the_real_checks():
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    for expected in ["ruff check", "mypy", "pytest", "pip-audit", "npm test", "smoke.js"]:
+        assert expected in ci, f"CI does not run {expected}"
+
+
+def test_deploy_requires_ci_and_is_opt_in():
+    deploy = (REPO_ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    assert "needs: ci" in deploy, "a deploy must not run before CI passes"
+    assert "vars.DEPLOY_ENABLED == 'true'" in deploy, "deploy must be opt-in"
+    assert "StrictHostKeyChecking=yes" in deploy, "host key must be pinned"
+
+
+def test_pull_deploy_rolls_back_on_a_failed_healthcheck():
+    script = (REPO_ROOT / "deploy" / "pull-deploy.sh").read_text()
+    assert "Rolling back" in script
+    assert 'git reset --hard "$PREVIOUS"' in script
+
+
+def test_pull_deploy_never_calls_sudo():
+    """It runs as a forced command with no TTY, so sudo could only hang."""
+    script = (REPO_ROOT / "deploy" / "pull-deploy.sh").read_text()
+    code = [
+        line
+        for line in script.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert not any("sudo" in line for line in code)
+
+
+def test_pull_deploy_gates_on_the_api_coming_up():
+    script = (REPO_ROOT / "deploy" / "pull-deploy.sh").read_text()
+    assert "/api/status" in script, "a deploy must verify the app actually starts"
