@@ -3,7 +3,8 @@ from datetime import UTC, datetime
 import httpx
 
 from app.config import settings
-from app.connectors.base import ExecutionConnector, RateLimited
+from app.connectors.base import ExecutionConnector
+from app.connectors.http import get_with_retry
 from app.models.schemas import OrderResult, Quote, Side
 
 # SPL mint addresses. Each is a 32-byte base58 pubkey; verify any addition
@@ -33,16 +34,8 @@ class JupiterConnector(ExecutionConnector):
         await self.client.aclose()
 
     async def _get_json(self, url: str, params: dict) -> dict:
-        """GET that turns a 429 into RateLimited, honouring Retry-After."""
-        r = await self.client.get(url, params=params)
-        if r.status_code == 429:
-            raw = r.headers.get("Retry-After", "")
-            try:
-                retry_after = float(raw) if raw else None
-            except ValueError:
-                retry_after = None
-            raise RateLimited(self.venue, retry_after=retry_after)
-        r.raise_for_status()
+        """GET with retries; a 429 becomes RateLimited for the scan loop."""
+        r = await get_with_retry(self.client, url, venue=self.venue, params=params)
         return r.json()
 
     @staticmethod
