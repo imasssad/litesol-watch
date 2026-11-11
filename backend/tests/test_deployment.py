@@ -268,3 +268,14 @@ def test_ci_validates_the_deployment_config():
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
     assert "caddy validate" in ci, "the Caddyfile must be adapted in CI"
     assert "docker compose config" in ci
+
+
+def test_enable_public_is_rerunnable_while_the_stack_is_up():
+    """Our own caddy container holds 80/443 on every re-run.
+
+    Treating that as a port conflict made the script impossible to re-run,
+    which is exactly when you need it (changing hostname or TLS mode).
+    """
+    script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
+    assert "ps -q caddy" in script, "must recognise its own container"
+    assert "OURS_RUNNING" in script

@@ -145,15 +145,30 @@ if ! docker run --rm --env-file "$CADDY_ENV" \
     exit 1
 fi
 
-echo "==> Checking ports 80 and 443 are free..."
-for port in 80 443; do
-    if ss -lntH "sport = :$port" 2>/dev/null | grep -q .; then
-        echo "ERROR: something already listens on port $port:" >&2
-        ss -lntpH "sport = :$port" 2>/dev/null >&2 || true
-        echo "Caddy needs both. Stop that service and re-run." >&2
-        exit 1
-    fi
-done
+echo "==> Checking ports 80 and 443..."
+# Our own caddy container holds them on every re-run; that is not a conflict,
+# compose simply recreates it. Only a foreign listener is a problem.
+OURS="$($COMPOSE ps -q caddy 2>/dev/null || true)"
+OURS_RUNNING=no
+if [ -n "$OURS" ] && [ "$(docker inspect -f '{{.State.Running}}' "$OURS" 2>/dev/null)" = "true" ]; then
+    OURS_RUNNING=yes
+fi
+
+if [ "$OURS_RUNNING" = "yes" ]; then
+    echo "    held by this stack's own caddy container; it will be recreated."
+else
+    for port in 80 443; do
+        if ss -lntH "sport = :$port" 2>/dev/null | grep -q .; then
+            echo "ERROR: another process already listens on port $port:" >&2
+            sudo ss -lntpH "sport = :$port" 2>/dev/null >&2 || ss -lntH "sport = :$port" >&2 || true
+            echo >&2
+            echo "Caddy needs both 80 and 443. Stop that service and re-run." >&2
+            echo "If it is a stray container:  docker ps --filter publish=$port" >&2
+            exit 1
+        fi
+    done
+    echo "    both free."
+fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     echo "==> Opening 80/443 in ufw..."
