@@ -62,3 +62,31 @@ def test_compose_supplies_env_and_keeps_api_on_loopback():
     compose = (REPO_ROOT / "docker-compose.yml").read_text()
     assert "backend/.env" in compose, "compose must inject config via env_file"
     assert "127.0.0.1:8000:8000" in compose, "control API must not bind all interfaces"
+
+
+def test_sqlalchemy_declares_the_asyncio_extra():
+    """SQLAlchemy 2.1 moved greenlet out to the [asyncio] extra.
+
+    Without the extra, a clean install - which is exactly what the Docker
+    image does - has no greenlet, and the app dies importing
+    sqlalchemy.ext.asyncio. A dev virtualenv that ever held an older
+    SQLAlchemy keeps greenlet lying around, so this is invisible locally and
+    only shows up in the container.
+    """
+    reqs = (REPO_ROOT / "backend" / "requirements.txt").read_text()
+    assert "SQLAlchemy[asyncio]==" in reqs, (
+        "requirements.txt must pin SQLAlchemy with the [asyncio] extra so "
+        "greenlet is installed"
+    )
+
+
+def test_greenlet_is_actually_importable():
+    """Runtime counterpart to the pin check above."""
+    import greenlet  # noqa: F401
+
+
+def test_async_engine_can_be_constructed():
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    assert engine is not None
