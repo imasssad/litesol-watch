@@ -78,23 +78,38 @@ mypy app --ignore-missing-imports
 
 ## Deploying to a server
 
-See [`deploy/README.md`](deploy/README.md). Short version, from your machine:
+See [`deploy/README.md`](deploy/README.md) for the full runbook. Deployment
+path is `/var/www/litesol`. Short version, on the server:
 
 ```bash
-rsync -az --delete --exclude .git --exclude backend/.venv \
-  --exclude backend/data --exclude backend/.env \
-  --exclude web-app/node_modules --exclude data \
-  ./ <user>@<server-ip>:~/litesol-watch/
+sudo apt update && sudo apt install -y git docker.io docker-compose-v2
 ```
 
 ```bash
-ssh <user>@<server-ip> 'bash ~/litesol-watch/deploy/bootstrap.sh'
+sudo usermod -aG docker $USER && exit
+```
+
+Reconnect, then:
+
+```bash
+sudo mkdir -p /var/www && sudo install -d -o "$USER" -g "$USER" /var/www/litesol
+```
+
+```bash
+git clone -b main https://github.com/imasssad/litesol-watch.git /var/www/litesol
+```
+
+```bash
+bash /var/www/litesol/deploy/bootstrap.sh
 ```
 
 The bootstrap script installs nothing silently, generates a random
 `API_AUTH_TOKEN`, deploys in paper mode, and never overwrites an existing
-`backend/.env`. The API binds to loopback only; reach the dashboard over an
-SSH tunnel (`ssh -L 8000:127.0.0.1:8000 ...`).
+`backend/.env`. To update later:
+`cd /var/www/litesol && git pull && bash deploy/bootstrap.sh`.
+
+The API binds to loopback only; reach the dashboard over an SSH tunnel
+(`ssh -L 8000:127.0.0.1:8000 ...`).
 
 ## Docker
 

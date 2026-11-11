@@ -4,56 +4,107 @@ Deploys the backend + dashboard with docker compose, **in paper mode**. The
 bootstrap script never enables live trading and never overwrites an existing
 `backend/.env`.
 
-## One-time: from your machine
+Deployment path: **`/var/www/litesol`**.
 
-From a checkout of this repo on your own machine (not the server):
+## Prerequisites on the server
 
-```bash
-rsync -az --delete \
-  --exclude .git --exclude backend/.venv --exclude backend/data \
-  --exclude backend/.env --exclude web-app/node_modules --exclude data \
-  ./ <user>@<server-ip>:~/litesol-watch/
-```
+Ubuntu 24.04 ships with neither git nor docker. Install both:
 
 ```bash
-ssh <user>@<server-ip> 'bash ~/litesol-watch/deploy/bootstrap.sh'
+sudo apt update && sudo apt install -y git docker.io docker-compose-v2
 ```
 
-(`rsync` instead of a server-side `git clone` so the server needs no GitHub
-credentials. If the server has docker missing, the script prints the exact
-install commands and exits.)
+Then give your user access to the docker socket. The `exit` matters — group
+membership only applies to a new login session:
+
+```bash
+sudo usermod -aG docker $USER && exit
+```
+
+Reconnect and confirm:
+
+```bash
+docker compose version && docker info >/dev/null && echo "docker OK"
+```
+
+## First deploy
+
+Create the directory owned by your user, so compose and the SQLite volume do
+not need root:
+
+```bash
+sudo mkdir -p /var/www && sudo install -d -o "$USER" -g "$USER" /var/www/litesol
+```
+
+Clone `main` into it. `-b main` is required while GitHub's default branch is
+still the older `claude/...` one, which predates `deploy/`:
+
+```bash
+git clone -b main https://github.com/imasssad/litesol-watch.git /var/www/litesol
+```
+
+The repository is private, so the clone prompts for credentials: username
+`imasssad`, password = a **fine-grained GitHub token** with *Contents:
+Read-only* on `litesol-watch` (GitHub → Settings → Developer settings →
+Fine-grained tokens). A GitHub account password will not work.
+
+```bash
+bash /var/www/litesol/deploy/bootstrap.sh
+```
+
+That builds the image, generates a random `API_AUTH_TOKEN` into
+`backend/.env`, starts the stack in paper mode, waits for the API and prints
+the status JSON.
 
 ## Updating
 
-Re-run the same two commands. `--exclude backend/.env --exclude data` keeps
-the server's token and trade history; compose rebuilds only what changed.
+```bash
+cd /var/www/litesol && git pull && bash deploy/bootstrap.sh
+```
+
+`backend/.env` and `data/` are git-ignored and never overwritten, so the
+server keeps its token and trade history. Compose rebuilds only what changed.
 
 ## Accessing the dashboard
 
 The API binds to `127.0.0.1` on the server **on purpose** — a trading bot's
 control endpoints (kill switch included) must not face the internet, even
-with token auth. Reach it through an SSH tunnel:
+with token auth. Reach it through an SSH tunnel from your own machine:
 
 ```bash
-ssh -L 8000:127.0.0.1:8000 <user>@<server-ip>
+ssh -p 2222 -L 8000:127.0.0.1:8000 dev2@<server-ip>
 ```
 
-then open <http://localhost:8000>. Paste the `API_AUTH_TOKEN` from the
-server's `backend/.env` into the dashboard's token field to use the controls.
+Leave that open and browse to <http://localhost:8000>. Paste the
+`API_AUTH_TOKEN` from `/var/www/litesol/backend/.env` into the dashboard's
+token field to use the controls.
+
+(SSH on this host listens on **2222**, not 22. `scp` needs a capital
+`-P 2222`.)
 
 If you later want it on a hostname, put a TLS reverse proxy (caddy/nginx)
 with its own auth in front — do not change the compose port binding to
 `0.0.0.0`.
 
+## Operations
+
+```bash
+cd /var/www/litesol
+docker compose logs -f        # follow logs
+docker compose ps             # container state
+docker compose restart        # restart
+docker compose down           # stop and remove
+```
+
 ## Server hygiene
 
-- **Use SSH keys, not passwords** (`ssh-copy-id <user>@<server-ip>`, then set
-  `PasswordAuthentication no` in `/etc/ssh/sshd_config`). Rotate any password
-  that has ever been shared in a chat, ticket or email.
-- Firewall: only 22 open inbound (`ufw allow OpenSSH && ufw enable`). The bot
-  needs nothing inbound.
-- The SQLite history lives in `~/litesol-watch/data/` on the server; back it
-  up if you care about it.
+- **Use SSH keys, not passwords.** Generate one locally, then append the
+  public half to `~/.ssh/authorized_keys` on the server. Rotate any password
+  that has been shared in a chat, ticket or email.
+- Firewall: allow only your SSH port inbound (`sudo ufw allow 2222/tcp &&
+  sudo ufw enable`). The bot needs nothing inbound.
+- The SQLite history lives in `/var/www/litesol/data/`; back it up if you
+  care about it.
 
 ## Going live later
 
@@ -62,5 +113,5 @@ is worked through on testnet/tiny size. When the time comes: trade-only,
 IP-allowlisted exchange keys into `backend/.env`, then set both
 `LIVE_TRADING=true` and `EXECUTION_ENABLED=true` and restart. The app refuses
 to start live with a placeholder API token, and DEX execution is still
-intentionally unimplemented (see AUDIT.md) — with `DEX_VENUE=jupiter` the
-two-leg strategy cannot run live yet.
+intentionally unimplemented (see [`AUDIT.md`](../AUDIT.md)) — with
+`DEX_VENUE=jupiter` the two-leg strategy cannot run live yet.
