@@ -1,21 +1,26 @@
 # Public entry point for the dashboard.
 #
-# Caddy obtains and renews a Let's Encrypt certificate automatically for
-# PUBLIC_HOSTNAME, terminates TLS, enforces basic auth, and only then proxies
-# to the bot on the internal compose network. The bot itself publishes no host
-# port, so this is the only route in.
+# Caddy terminates TLS for PUBLIC_HOSTNAME, enforces basic auth, and only then
+# proxies to the bot on the internal compose network. The bot publishes no
+# public port, so this is the only route in.
 #
-# Set in backend/.env:
-#   PUBLIC_HOSTNAME   e.g. bot.92-113-21-159.sslip.io
-#   ACME_EMAIL        for Let's Encrypt expiry notices
+# Set in deploy/caddy.env (written by deploy/enable-public.sh):
+#   PUBLIC_HOSTNAME   the name this is served as
+#   TLS_ARG           an email address  -> public ACME certificate
+#                     the word internal -> Caddy's own CA, for a CDN origin
 #   BASIC_AUTH_USER   login name
-#   BASIC_AUTH_HASH   bcrypt hash from: docker run --rm caddy:2.8-alpine caddy hash-password --plaintext 'yourpassword'
-
-{
-	email {$ACME_EMAIL}
-}
+#   BASIC_AUTH_HASH   bcrypt hash: docker run --rm caddy:2.8-alpine \
+#                       caddy hash-password --plaintext 'yourpassword'
 
 {$PUBLIC_HOSTNAME} {
+	# TLS_ARG is either an email address, which makes Caddy obtain a public
+	# ACME certificate, or the literal word "internal", which makes it use its
+	# own CA. "internal" is what you want when a CDN such as Cloudflare
+	# terminates TLS for visitors and only has to accept this origin itself:
+	# public issuance would need the CDN out of the path, and the CDN's "Full"
+	# mode accepts any origin certificate.
+	tls {$TLS_ARG}
+
 	encode zstd gzip
 
 	# Gate everything, including the read-only panels. A port scanner should
