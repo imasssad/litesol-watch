@@ -59,10 +59,13 @@ if [ -z "$HOST" ]; then
 fi
 
 # --- ACME email -----------------------------------------------------------
+# Must be non-empty: the Caddyfile's `email` directive takes an argument, and a
+# blank one expands to `email` alone, which fails to parse.
 EMAIL="$(get_env ACME_EMAIL)"
-if [ -z "$EMAIL" ]; then
-    read -r -p "Email for certificate expiry notices: " EMAIL
-fi
+while [ -z "${EMAIL// }" ] || [[ "$EMAIL" != *@*.* ]]; do
+    [ -n "$EMAIL" ] && echo "    '$EMAIL' does not look like an email address." >&2
+    read -r -p "Email for certificate expiry notices (required): " EMAIL
+done
 
 # --- basic auth -----------------------------------------------------------
 USER_NAME="$(get_env BASIC_AUTH_USER)"
@@ -79,6 +82,15 @@ if [ -z "$USER_NAME" ] || [ -z "$HASH" ]; then
     HASH="$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$PASS")"
     unset PASS PASS2
 fi
+
+# --- sanity-check every value before writing ------------------------------
+for pair in "PUBLIC_HOSTNAME:$HOST" "ACME_EMAIL:$EMAIL" "BASIC_AUTH_USER:$USER_NAME" "BASIC_AUTH_HASH:$HASH"; do
+    name="${pair%%:*}"; value="${pair#*:}"
+    if [ -z "${value// }" ]; then
+        echo "ERROR: $name is empty. Every setting is required." >&2
+        exit 1
+    fi
+done
 
 # --- write caddy.env (NOT backend/.env: the proxy gets no trading secrets) -
 umask 077
