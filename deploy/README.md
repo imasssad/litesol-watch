@@ -138,55 +138,43 @@ If you would rather GitHub held nothing at all, run `deploy/pull-deploy.sh`
 from a cron job on the server instead and skip this section entirely. That is
 pull-based: slower to react, but nothing inbound to steal.
 
-### 1. Make a dedicated deploy key
+### Setup, scripted
 
-On your own machine — not the server, and not reused from your login key:
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/litesol_deploy -N "" -C "github-actions-deploy"
-```
-
-### 2. Pin it to the deploy script on the server
-
-Add the **public** half to `~/.ssh/authorized_keys` with a forced command, all
-on one line:
-
-```text
-command="/var/www/litesol/deploy/pull-deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA...your-public-key... github-actions-deploy
-```
-
-The `command=` prefix is what matters: whatever CI sends is ignored and only
-that script runs. `no-pty` blocks an interactive shell. Verify from your
-machine — it should run a deploy and exit, never give you a prompt:
+On the server:
 
 ```bash
-ssh -i ~/.ssh/litesol_deploy -p 2222 dev2@<server-ip> "echo this is ignored"
+cd ~/litesol-watch && bash deploy/setup-cicd.sh
 ```
 
-### 3. Capture the server's host key
+It generates a dedicated deploy key, installs the public half pinned to a
+**forced command** so that key can only trigger a deploy — no shell, no port
+forwarding, no reading `backend/.env` — captures this host's SSH host key, and
+prints the five values to paste into GitHub. It backs up `authorized_keys`
+first and refuses to continue if any existing key would be lost.
+
+Then in **GitHub → Settings → Secrets and variables → Actions**:
+
+| Kind | Name |
+| --- | --- |
+| Variable | `DEPLOY_ENABLED` = `true` |
+| Secret | `DEPLOY_HOST` |
+| Secret | `DEPLOY_PORT` |
+| Secret | `DEPLOY_USER` |
+| Secret | `DEPLOY_KNOWN_HOSTS` |
+| Secret | `DEPLOY_SSH_KEY` |
+
+The script prints each one. **The private key goes only into the GitHub secret
+field** — not into a chat, an issue, or a ticket.
+
+Test it without waiting for a merge: **Actions → Deploy → Run workflow**. And
+confirm the key really is restricted — this should run a deploy and exit,
+never give you a prompt:
 
 ```bash
-ssh-keyscan -p 2222 <server-ip>
+ssh -i ~/.ssh/litesol_deploy -p <port> <user>@<host> "echo this is ignored"
 ```
 
-This pins the server's identity so the deploy cannot be redirected to another
-host. Copy the whole output.
-
-### 4. Add the repository settings
-
-Settings → Secrets and variables → Actions:
-
-| Kind | Name | Value |
-| --- | --- | --- |
-| Variable | `DEPLOY_ENABLED` | `true` |
-| Secret | `DEPLOY_HOST` | the server IP |
-| Secret | `DEPLOY_PORT` | `2222` |
-| Secret | `DEPLOY_USER` | `dev2` |
-| Secret | `DEPLOY_SSH_KEY` | contents of `~/.ssh/litesol_deploy` (the private half) |
-| Secret | `DEPLOY_KNOWN_HOSTS` | the `ssh-keyscan` output |
-
-Consider a `production` environment with required reviewers, so a merge waits
-for a human before touching the server.
+To revoke, delete that key's line from `~/.ssh/authorized_keys`.
 
 ### What a deploy does
 
