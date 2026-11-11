@@ -167,3 +167,68 @@ def test_pull_deploy_never_calls_sudo():
 def test_pull_deploy_gates_on_the_api_coming_up():
     script = (REPO_ROOT / "deploy" / "pull-deploy.sh").read_text()
     assert "/api/status" in script, "a deploy must verify the app actually starts"
+
+
+# --- public exposure ------------------------------------------------------
+
+
+def _compose() -> str:
+    return (REPO_ROOT / "docker-compose.yml").read_text()
+
+
+def test_bot_itself_is_never_published_publicly():
+    """Only Caddy may face the internet; the app stays on loopback.
+
+    A bare "8000:8000" would publish the control API - kill switch included -
+    on every interface in cleartext.
+    """
+    compose = _compose()
+    assert '"127.0.0.1:8000:8000"' in compose
+    assert '"8000:8000"' not in compose
+    assert '"0.0.0.0:8000:8000"' not in compose
+
+
+def test_caddy_does_not_receive_the_trading_secrets():
+    """The TLS proxy must not be handed the API token or exchange keys."""
+    compose = _compose()
+    caddy_block = compose[compose.index("caddy:") :]
+    # Strip comments: a comment explaining the choice must not satisfy or
+    # break this check - only real directives count.
+    directives = [
+        line.split("#", 1)[0].strip()
+        for line in caddy_block.splitlines()
+        if line.split("#", 1)[0].strip()
+    ]
+    assert "- deploy/caddy.env" in directives
+    assert not any("backend/.env" in line for line in directives)
+
+
+def test_caddy_env_is_git_ignored():
+    assert "deploy/caddy.env" in (REPO_ROOT / ".gitignore").read_text()
+
+
+def test_caddyfile_gates_everything_behind_basic_auth():
+    caddyfile = (REPO_ROOT / "deploy" / "Caddyfile").read_text()
+    # basic_auth is the Caddy 2.8 name; basicauth is the deprecated alias.
+    assert "basic_auth {" in caddyfile
+    assert "{$BASIC_AUTH_HASH}" in caddyfile, "password must be a hash, never plaintext"
+    assert "reverse_proxy arb-bot:8000" in caddyfile
+
+
+def test_caddyfile_sets_security_headers():
+    caddyfile = (REPO_ROOT / "deploy" / "Caddyfile").read_text()
+    for header in [
+        "Strict-Transport-Security",
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Content-Security-Policy",
+    ]:
+        assert header in caddyfile, f"{header} is not set"
+
+
+def test_certificate_volumes_persist():
+    """Losing /data on every restart would re-request certificates and burn
+    straight through the issuance rate limit."""
+    compose = _compose()
+    assert "caddy_data:/data" in compose
+    assert "caddy_data:" in compose.split("volumes:")[-1]
