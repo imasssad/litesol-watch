@@ -94,6 +94,7 @@ async def status():
         "auth_configured": settings.auth_configured,
         "running": scanner.running,
         "rate_limited": scanner.rate_limited,
+        "last_scan_error": scanner.last_scan_error,
         "kill_switch": scanner.risk.kill_switch,
         "kill_switch_reason": scanner.risk.kill_switch_reason,
         "pair": settings.pair,

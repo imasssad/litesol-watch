@@ -347,11 +347,15 @@ async function refresh() {
       : ''
   );
 
+  // A venue being unreachable is not a trading failure: no order is
+  // attempted, so the bot keeps retrying instead of halting.
   show(
     'rateLimit',
-    status.rate_limited
-      ? 'A venue is rate limiting this client. The scanner is backing off and will retry — this is not counted as a trading failure.'
-      : ''
+    status.rate_limited && status.last_scan_error
+      ? `Venue unavailable — backing off and retrying. No order was attempted, so this does not halt the bot. Last error: ${status.last_scan_error}`
+      : status.rate_limited
+        ? 'A venue is rate limiting this client. The scanner is backing off and will retry — this is not counted as a trading failure.'
+        : ''
   );
 
   table('quotes', quotes, [
