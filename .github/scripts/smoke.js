@@ -32,6 +32,21 @@ async function metricValue(page, metric) {
 
   await page.goto(BASE, { waitUntil: 'networkidle' });
   check('gate is shown on load', await page.isVisible('#gate'));
+
+  // No proxy password sits in front any more, so the token must be the real
+  // gate: every data endpoint has to reject an unauthenticated read.
+  const unauth = {};
+  for (const ep of ['/api/status', '/api/quotes', '/api/trades', '/api/opportunities', '/api/health']) {
+    const r = await page.request.get(`${BASE}${ep}`);
+    unauth[ep] = r.status();
+  }
+  check(
+    'data endpoints reject unauthenticated reads',
+    Object.values(unauth).every((s) => s === 401),
+    JSON.stringify(unauth)
+  );
+  const ping = await page.request.get(`${BASE}/api/ping`);
+  check('ping stays public for the gate probe', ping.status() === 200);
   check('dashboard is hidden before auth', !(await page.isVisible('#app')));
 
   await page.fill('#token', 'definitely-the-wrong-token');

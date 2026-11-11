@@ -212,8 +212,8 @@ tunnel. To publish it:
 cd /var/www/litesol && bash deploy/enable-public.sh
 ```
 
-The script asks for a hostname, an email, and a dashboard password, then
-starts a Caddy reverse proxy in front of the bot.
+The script asks for a hostname and an email, then starts a Caddy reverse
+proxy in front of the bot.
 
 ### What it sets up
 
@@ -226,9 +226,11 @@ internet ──HTTPS──> Caddy :443 ──basic auth──> arb-bot:8000 (int
 - **Automatic HTTPS.** Caddy obtains and renews a certificate with no manual
   steps. Certificates live in a named volume so a restart does not re-request
   them.
-- **Basic auth on everything**, including the read-only panels. A port scanner
-  finds a password prompt, not your trading dashboard. The password is stored
-  only as a bcrypt hash.
+- **One login: the dashboard's token gate.** There is no proxy-level
+  password. That is safe only because the application authenticates *every*
+  API endpoint with `API_AUTH_TOKEN` — reads included. Without a token the
+  whole API returns 401; only the static page and `/api/ping` (a bare liveness
+  probe for the unlock screen) are public.
 - **The bot is never published.** It keeps its loopback binding, so Caddy is
   the only public route and the SSH tunnel keeps working unchanged.
 - **Security headers**: HSTS, `nosniff`, `X-Frame-Options: DENY`, a strict CSP
@@ -282,11 +284,16 @@ In order of likelihood: certificate rate limiting (above); **port 80 blocked by
 a provider firewall** — the ACME challenge needs it open inbound, not just 443;
 or DNS not pointing at the server. The SSH tunnel keeps working throughout.
 
-### Two layers of auth
+### Authentication
 
-The basic-auth login gets you to the page. The dashboard's own
-`API_AUTH_TOKEN` is still required for Start/Stop/Scan/Kill Switch. Losing the
-basic-auth password does not by itself give anyone control of the bot.
+`API_AUTH_TOKEN` guards the entire API — status, quotes, opportunities,
+trades, venue health and all the controls. A visitor without it sees the
+unlock screen and nothing else.
+
+This is a single layer, so treat the token as the credential that protects
+both the data and the kill switch, and rotate it if it is ever shared. If you
+later want defence in depth, add `basic_auth` back to `deploy/Caddyfile` with
+a bcrypt hash from `caddy hash-password`.
 
 ### Reverting to tunnel-only
 

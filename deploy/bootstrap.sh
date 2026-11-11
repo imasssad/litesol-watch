@@ -109,7 +109,7 @@ $COMPOSE up -d --build
 echo "==> Waiting for the API..."
 ok=""
 for _ in $(seq 1 30); do
-    if curl -sf http://127.0.0.1:8000/api/status >/dev/null 2>&1; then ok=1; break; fi
+    if curl -sf http://127.0.0.1:8000/api/ping >/dev/null 2>&1; then ok=1; break; fi
     sleep 2
 done
 
@@ -121,7 +121,9 @@ fi
 
 echo
 echo "==> UP. Status:"
-curl -s http://127.0.0.1:8000/api/status; echo
+# /api/status needs the token now, so read it back from the env file.
+BOOT_TOKEN="$(grep '^API_AUTH_TOKEN=' backend/.env | head -1 | cut -d= -f2-)"
+curl -s -H "X-API-Token: ${BOOT_TOKEN}" http://127.0.0.1:8000/api/status; echo
 echo
 echo "The API listens on 127.0.0.1 ONLY (never exposed publicly by design)."
 echo "Open the dashboard from your machine through an SSH tunnel:"

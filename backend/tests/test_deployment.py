@@ -226,12 +226,49 @@ def test_enable_public_picks_internal_tls_behind_a_proxy():
     assert "TLS_ARG" in script
 
 
-def test_caddyfile_gates_everything_behind_basic_auth():
+def test_caddyfile_has_no_proxy_level_password():
+    """The dashboard's token gate is the single login.
+
+    That only holds because the application authenticates every data endpoint
+    (see test_every_data_endpoint_requires_the_token) - without that, removing
+    the proxy password would expose quotes, trades and config to anyone with
+    the URL.
+    """
     caddyfile = (REPO_ROOT / "deploy" / "Caddyfile").read_text()
-    # basic_auth is the Caddy 2.8 name; basicauth is the deprecated alias.
-    assert "basic_auth {" in caddyfile
-    assert "{$BASIC_AUTH_HASH}" in caddyfile, "password must be a hash, never plaintext"
+    assert "basic_auth" not in caddyfile
+    assert "BASIC_AUTH" not in caddyfile
     assert "reverse_proxy arb-bot:8000" in caddyfile
+
+
+def test_every_data_endpoint_requires_the_token():
+    """Load-bearing for the above: nothing but the page and the liveness
+    probe may be readable without the token."""
+    main = (REPO_ROOT / "backend" / "app" / "main.py").read_text()
+    for path in [
+        "/api/status",
+        "/api/health",
+        "/api/quotes",
+        "/api/opportunities",
+        "/api/trades",
+        "/api/scan-once",
+        "/api/start",
+        "/api/stop",
+        "/api/kill-switch/on",
+        "/api/kill-switch/off",
+    ]:
+        decorator = main[main.index(f'"{path}"') : main.index(f'"{path}"') + 120]
+        assert "Depends(require_auth)" in decorator, f"{path} is unauthenticated"
+
+
+def test_ping_is_the_only_public_api_endpoint():
+    """The unlock screen must be able to show reachability before it has a
+    token, and that probe must reveal nothing else."""
+    from app.main import ping
+
+    assert ping is not None
+    main = (REPO_ROOT / "backend" / "app" / "main.py").read_text()
+    ping_decorator = main[main.index('"/api/ping"') : main.index('"/api/ping"') + 60]
+    assert "require_auth" not in ping_decorator
 
 
 def test_caddyfile_sets_security_headers():
@@ -296,3 +333,34 @@ def test_enable_public_resolves_before_deciding_tls_mode():
     assigned = script.index('RESOLVED="$(getent hosts')
     used = script.index('if [ -z "$RESOLVED" ]; then')
     assert assigned < used, "RESOLVED is read before it is assigned"
+
+
+def test_no_health_check_points_at_an_authenticated_endpoint():
+    """Health probes must use /api/ping, not /api/status.
+
+    When every data endpoint became authenticated, seven health checks still
+    polled /api/status. The worst was Caddy's active check: a 401 makes it
+    mark the backend down and serve 502 to every visitor.
+    """
+    probes = {
+        "docker-compose.yml": REPO_ROOT / "docker-compose.yml",
+        "Caddyfile": REPO_ROOT / "deploy" / "Caddyfile",
+        "ci.yml": REPO_ROOT / ".github" / "workflows" / "ci.yml",
+    }
+    for name, path in probes.items():
+        for line in path.read_text().splitlines():
+            code = line.split("#", 1)[0]
+            if "health" in line.lower() or "curl -sf" in code:
+                assert "/api/status" not in code, (
+                    f"{name}: health check uses the authenticated /api/status"
+                )
+
+    # The shell scripts may read /api/status, but only with a token.
+    for script in ["bootstrap.sh", "pull-deploy.sh"]:
+        text = (REPO_ROOT / "deploy" / script).read_text()
+        for line in text.splitlines():
+            code = line.split("#", 1)[0]
+            if "/api/status" in code:
+                assert "X-API-Token" in code, f"{script}: unauthenticated /api/status call"
+            if "curl -sf" in code and "/api/" in code:
+                assert "/api/ping" in code, f"{script}: liveness probe must use /api/ping"
