@@ -75,14 +75,21 @@
         </div>
       </div>
       <div class="controls">
-        <button class="primary" onclick="post('/api/start')">Start</button>
-        <button onclick="post('/api/stop')">Stop</button>
-        <button onclick="post('/api/scan-once')">Scan Once</button>
-        <button class="danger" onclick="post('/api/kill-switch/on')">Kill Switch</button>
-        <button onclick="post('/api/kill-switch/off')">Reset Kill</button>
+        <button class="primary" data-action="/api/start" data-busy="Starting"
+                data-done="Scanner started">Start</button>
+        <button data-action="/api/stop" data-busy="Stopping"
+                data-done="Scanner stopped">Stop</button>
+        <button data-action="/api/scan-once" data-busy="Scanning"
+                data-done="Scan complete">Scan Once</button>
+        <button class="danger" data-action="/api/kill-switch/on" data-busy="Engaging"
+                data-done="Kill switch ENGAGED — trading halted">Kill Switch</button>
+        <button data-action="/api/kill-switch/off" data-busy="Resetting"
+                data-done="Kill switch released">Reset Kill</button>
         <button id="lock" class="ghost" title="Forget the token and lock this dashboard">Lock</button>
       </div>
     </header>
+
+    <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
 
     <div class="banner safety">
       <strong>Safety:</strong> live trades require both <code>LIVE_TRADING=true</code>

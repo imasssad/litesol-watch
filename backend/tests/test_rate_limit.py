@@ -182,3 +182,53 @@ async def test_jupiter_maps_429_to_rate_limited(monkeypatch):
     assert exc.value.venue == "Jupiter"
     assert exc.value.retry_after == 3.0
     await conn.aclose()
+
+
+# --- the manual scan endpoint must not leak bare 500s ----------------------
+
+
+async def test_manual_scan_maps_rate_limiting_to_429(monkeypatch):
+    """A 429 from a venue used to surface as "500 (Internal Server Error)"."""
+    from fastapi import HTTPException
+
+    from app.engine.scanner import scanner
+    from app.main import scan_once
+
+    async def throttled():
+        raise RateLimited("Jupiter", retry_after=17.0)
+
+    monkeypatch.setattr(scanner, "scan_once", throttled)
+    before = scanner.risk.failed_trade_count
+
+    with pytest.raises(HTTPException) as exc:
+        await scan_once()
+
+    assert exc.value.status_code == 429
+    assert "Jupiter" in exc.value.detail
+    assert exc.value.headers.get("Retry-After") == "17"
+    assert scanner.risk.failed_trade_count == before, "throttling is not a failure"
+
+
+async def test_manual_scan_maps_venue_errors_to_502(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.db.init_db import init_db
+    from app.engine.scanner import scanner
+    from app.main import scan_once
+
+    await init_db()
+
+    async def broken():
+        raise RuntimeError("venue returned garbage")
+
+    monkeypatch.setattr(scanner, "scan_once", broken)
+    scanner.risk.failed_trade_count = 0
+    scanner.risk.kill_switch = False
+
+    with pytest.raises(HTTPException) as exc:
+        await scan_once()
+
+    assert exc.value.status_code == 502
+    assert "venue returned garbage" in exc.value.detail
+    assert "RuntimeError" in exc.value.detail
+    assert scanner.risk.failed_trade_count == 1, "a real error must still count"
