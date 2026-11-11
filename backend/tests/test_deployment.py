@@ -232,3 +232,20 @@ def test_certificate_volumes_persist():
     compose = _compose()
     assert "caddy_data:/data" in compose
     assert "caddy_data:" in compose.split("volumes:")[-1]
+
+
+def test_enable_public_requires_a_non_empty_acme_email():
+    """A blank email expands to a bare `email` directive, which cannot parse.
+
+    This broke a real deploy; the validate step caught it before anything
+    started, but the script should not have accepted the blank.
+    """
+    script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
+    assert "Email for certificate expiry notices (required)" in script
+    assert "while [ -z" in script, "the email prompt must loop until answered"
+
+
+def test_ci_validates_the_deployment_config():
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "caddy validate" in ci, "the Caddyfile must be adapted in CI"
+    assert "docker compose config" in ci
