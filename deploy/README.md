@@ -237,6 +237,28 @@ internet ──HTTPS──> Caddy :443 ──basic auth──> arb-bot:8000 (int
   `backend/.env` — the TLS proxy has no business holding your API token or
   exchange keys. Both files are git-ignored.
 
+### Behind a CDN (Cloudflare and similar)
+
+If the hostname is proxied — it resolves to the CDN's addresses rather than
+this server — then **no public certificate can be issued here**, because the
+certificate authority has to reach this server directly and the CDN is in the
+way. Taking the proxy off needs CDN access, which you may not have.
+
+`enable-public.sh` detects this by comparing what the hostname resolves to
+against this server's public IP, and sets `TLS_ARG=internal`. Caddy then
+serves its own certificate on the origin leg. Visitors still get the CDN's
+valid public certificate; only the CDN-to-origin hop uses Caddy's, which is
+exactly what a CDN's **Full** SSL mode accepts.
+
+This resolves a **Cloudflare 525 (SSL handshake failed)**, which means the CDN
+reached this server but the origin had no certificate it could use.
+
+The one case it cannot fix from here: if the CDN is set to **Full (strict)**,
+it validates the origin certificate against a public CA and will reject a
+self-signed one. That needs either CDN access, or an origin certificate issued
+by the CDN (Cloudflare calls these Origin Certificates) dropped in and
+referenced from the Caddyfile with `tls /path/cert.pem /path/key.pem`.
+
 ### Hostnames without a domain
 
 The default is an [sslip.io](https://sslip.io) hostname such as

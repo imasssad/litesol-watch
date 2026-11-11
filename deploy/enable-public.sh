@@ -83,8 +83,34 @@ if [ -z "$USER_NAME" ] || [ -z "$HASH" ]; then
     unset PASS PASS2
 fi
 
+# --- TLS mode -------------------------------------------------------------
+# A public ACME certificate requires the CA to reach THIS server directly. When
+# a CDN proxies the hostname that is impossible without changing the CDN, so we
+# serve Caddy's own certificate instead: the CDN terminates TLS for visitors and
+# only has to accept this origin, which its "Full" mode does.
+if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$IP" ]; then
+    DEFAULT_TLS="internal"
+    echo
+    echo "==> A proxy/CDN sits in front of $HOST."
+    echo "    Using Caddy's own certificate for the origin leg (TLS_ARG=internal)."
+    echo "    Visitors still get the CDN's valid public certificate."
+    echo "    If the CDN is set to 'Full (strict)' it will reject this and you"
+    echo "    will need either CDN access or an origin certificate from it."
+else
+    DEFAULT_TLS="$EMAIL"
+    echo "==> No proxy detected; Caddy will obtain a public certificate."
+fi
+
+EXISTING_TLS="$(get_env TLS_ARG)"
+TLS_ARG="${EXISTING_TLS:-$DEFAULT_TLS}"
+if [ -n "$EXISTING_TLS" ] && [ "$EXISTING_TLS" != "$DEFAULT_TLS" ]; then
+    read -r -p "TLS_ARG is '$EXISTING_TLS'; use '$DEFAULT_TLS' instead? [y/N] " swap
+    [[ "$swap" =~ ^[Yy] ]] && TLS_ARG="$DEFAULT_TLS"
+fi
+echo "    TLS_ARG=$TLS_ARG"
+
 # --- sanity-check every value before writing ------------------------------
-for pair in "PUBLIC_HOSTNAME:$HOST" "ACME_EMAIL:$EMAIL" "BASIC_AUTH_USER:$USER_NAME" "BASIC_AUTH_HASH:$HASH"; do
+for pair in "PUBLIC_HOSTNAME:$HOST" "ACME_EMAIL:$EMAIL" "TLS_ARG:$TLS_ARG" "BASIC_AUTH_USER:$USER_NAME" "BASIC_AUTH_HASH:$HASH"; do
     name="${pair%%:*}"; value="${pair#*:}"
     if [ -z "${value// }" ]; then
         echo "ERROR: $name is empty. Every setting is required." >&2
@@ -100,6 +126,10 @@ cat > "$CADDY_ENV" <<EOF
 # API token or exchange credentials.
 PUBLIC_HOSTNAME=${HOST}
 ACME_EMAIL=${EMAIL}
+# An email address here means Caddy obtains a public ACME certificate.
+# The word "internal" means it uses its own CA - correct when a CDN
+# terminates TLS for visitors and only this origin leg must satisfy it.
+TLS_ARG=${TLS_ARG}
 BASIC_AUTH_USER=${USER_NAME}
 BASIC_AUTH_HASH=${HASH}
 EOF
@@ -115,15 +145,30 @@ if ! docker run --rm --env-file "$CADDY_ENV" \
     exit 1
 fi
 
-echo "==> Checking ports 80 and 443 are free..."
-for port in 80 443; do
-    if ss -lntH "sport = :$port" 2>/dev/null | grep -q .; then
-        echo "ERROR: something already listens on port $port:" >&2
-        ss -lntpH "sport = :$port" 2>/dev/null >&2 || true
-        echo "Caddy needs both. Stop that service and re-run." >&2
-        exit 1
-    fi
-done
+echo "==> Checking ports 80 and 443..."
+# Our own caddy container holds them on every re-run; that is not a conflict,
+# compose simply recreates it. Only a foreign listener is a problem.
+OURS="$($COMPOSE ps -q caddy 2>/dev/null || true)"
+OURS_RUNNING=no
+if [ -n "$OURS" ] && [ "$(docker inspect -f '{{.State.Running}}' "$OURS" 2>/dev/null)" = "true" ]; then
+    OURS_RUNNING=yes
+fi
+
+if [ "$OURS_RUNNING" = "yes" ]; then
+    echo "    held by this stack's own caddy container; it will be recreated."
+else
+    for port in 80 443; do
+        if ss -lntH "sport = :$port" 2>/dev/null | grep -q .; then
+            echo "ERROR: another process already listens on port $port:" >&2
+            sudo ss -lntpH "sport = :$port" 2>/dev/null >&2 || ss -lntH "sport = :$port" >&2 || true
+            echo >&2
+            echo "Caddy needs both 80 and 443. Stop that service and re-run." >&2
+            echo "If it is a stray container:  docker ps --filter publish=$port" >&2
+            exit 1
+        fi
+    done
+    echo "    both free."
+fi
 
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
     echo "==> Opening 80/443 in ufw..."
@@ -134,11 +179,12 @@ fi
 echo "==> Checking DNS for $HOST..."
 RESOLVED="$(getent hosts "$HOST" 2>/dev/null | awk '{print $1}' | head -1 || true)"
 if [ -z "$RESOLVED" ]; then
-    echo "    WARNING: $HOST does not resolve. If you used your own domain, add an A record to $IP first." >&2
-elif [ "$RESOLVED" != "$IP" ]; then
-    echo "    WARNING: $HOST resolves to $RESOLVED, not $IP. Certificate issuance will fail." >&2
+    echo "    WARNING: $HOST does not resolve yet." >&2
+elif [ "$RESOLVED" = "$IP" ]; then
+    echo "    resolves straight to this server ($RESOLVED)"
 else
-    echo "    resolves to $RESOLVED (correct)"
+    echo "    resolves to $RESOLVED, which is NOT this server ($IP)"
+    echo "    -> something (a CDN/proxy such as Cloudflare) sits in front."
 fi
 
 # --- start ----------------------------------------------------------------

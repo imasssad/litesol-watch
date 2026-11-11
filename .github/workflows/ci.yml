@@ -84,21 +84,26 @@ jobs:
         run: |
           # Needs the env files compose references; contents are irrelevant here.
           printf 'API_AUTH_TOKEN=ci-validate-token-0123456789\n' > backend/.env
-          printf 'PUBLIC_HOSTNAME=ci.example.com\nACME_EMAIL=ci@example.com\nBASIC_AUTH_USER=ci\nBASIC_AUTH_HASH=x\n' > deploy/caddy.env
+          printf 'PUBLIC_HOSTNAME=ci.example.com\nTLS_ARG=ci@example.com\nBASIC_AUTH_USER=ci\nBASIC_AUTH_HASH=x\n' > deploy/caddy.env
           docker compose config --quiet
 
-      - name: Validate the Caddyfile
+      - name: Validate the Caddyfile (both TLS modes)
         # A blank ACME_EMAIL once produced `email` with no argument and broke a
         # real deploy. Adapting the config here catches that on the PR instead.
+        # Both TLS_ARG forms must adapt: an email (public ACME certificate) and
+        # "internal" (Caddy's own CA, used when a CDN fronts the origin).
         run: |
-          docker run --rm \
-            -e PUBLIC_HOSTNAME=ci.example.com \
-            -e ACME_EMAIL=ci@example.com \
-            -e BASIC_AUTH_USER=ci \
-            -e 'BASIC_AUTH_HASH=$2a$14$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQ' \
-            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2.8-alpine \
-            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          for tls_arg in ci@example.com internal; do
+            echo "--- TLS_ARG=$tls_arg"
+            docker run --rm \
+              -e PUBLIC_HOSTNAME=ci.example.com \
+              -e "TLS_ARG=$tls_arg" \
+              -e BASIC_AUTH_USER=ci \
+              -e 'BASIC_AUTH_HASH=$2a$14$abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQ' \
+              -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+              caddy:2.8-alpine \
+              caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done
 
       - name: Shell scripts parse
         run: |

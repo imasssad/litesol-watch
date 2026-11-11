@@ -207,6 +207,25 @@ def test_caddy_env_is_git_ignored():
     assert "deploy/caddy.env" in (REPO_ROOT / ".gitignore").read_text()
 
 
+def test_caddyfile_tls_mode_is_configurable():
+    """Behind a CDN, public ACME issuance is impossible without CDN access.
+
+    `tls {$TLS_ARG}` takes either an email (public certificate) or the word
+    "internal" (Caddy's own CA), so an origin behind Cloudflare can be served
+    without touching Cloudflare at all.
+    """
+    caddyfile = (REPO_ROOT / "deploy" / "Caddyfile").read_text()
+    assert "tls {$TLS_ARG}" in caddyfile
+    # The old global email block broke when the value was blank.
+    assert "email {$ACME_EMAIL}" not in caddyfile
+
+
+def test_enable_public_picks_internal_tls_behind_a_proxy():
+    script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
+    assert 'DEFAULT_TLS="internal"' in script
+    assert "TLS_ARG" in script
+
+
 def test_caddyfile_gates_everything_behind_basic_auth():
     caddyfile = (REPO_ROOT / "deploy" / "Caddyfile").read_text()
     # basic_auth is the Caddy 2.8 name; basicauth is the deprecated alias.
@@ -249,3 +268,14 @@ def test_ci_validates_the_deployment_config():
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
     assert "caddy validate" in ci, "the Caddyfile must be adapted in CI"
     assert "docker compose config" in ci
+
+
+def test_enable_public_is_rerunnable_while_the_stack_is_up():
+    """Our own caddy container holds 80/443 on every re-run.
+
+    Treating that as a port conflict made the script impossible to re-run,
+    which is exactly when you need it (changing hostname or TLS mode).
+    """
+    script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
+    assert "ps -q caddy" in script, "must recognise its own container"
+    assert "OURS_RUNNING" in script
