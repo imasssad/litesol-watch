@@ -86,6 +86,28 @@ If you later want it on a hostname, put a TLS reverse proxy (caddy/nginx)
 with its own auth in front — do not change the compose port binding to
 `0.0.0.0`.
 
+## The data directory and the container user
+
+The container runs as the non-root `arbbot` user, **uid 10001**. `data/` is a
+bind mount, and a bind-mounted host directory keeps its host ownership inside
+the container — the Dockerfile's `chown` does not apply to it. So `data/` must
+be writable by uid 10001, or the app dies at startup with:
+
+```text
+sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unable to open database file
+```
+
+`bootstrap.sh` handles this: it checks the owner of `data/` and chowns it to
+10001 with sudo if needed. To do it by hand:
+
+```bash
+sudo chown -R 10001:10001 /var/www/litesol/data
+```
+
+Your own user can still read `data/` for backups, but not write to it. If you
+change the uid in `backend/Dockerfile`, change `CONTAINER_UID` in
+`deploy/bootstrap.sh` to match — a test enforces that they agree.
+
 ## Operations
 
 ```bash

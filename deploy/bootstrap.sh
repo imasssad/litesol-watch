@@ -81,7 +81,26 @@ EOF
     chmod 600 backend/.env
 fi
 
+# The container runs as the non-root arbbot user (uid 10001). A bind-mounted
+# host directory keeps its HOST ownership inside the container, which overrides
+# the Dockerfile's chown entirely - so data/ must be writable by that uid or
+# SQLite fails at startup with "unable to open database file".
+CONTAINER_UID=10001
 mkdir -p data
+CURRENT_UID="$(stat -c %u data)"
+if [ "$CURRENT_UID" != "$CONTAINER_UID" ]; then
+    echo "==> data/ is owned by uid $CURRENT_UID but the container runs as $CONTAINER_UID."
+    echo "    Fixing ownership (may prompt for your sudo password)..."
+    if sudo chown -R "$CONTAINER_UID:$CONTAINER_UID" data; then
+        echo "    data/ now owned by uid $CONTAINER_UID."
+    else
+        echo "ERROR: could not change ownership of data/." >&2
+        echo "Run this, then re-run this script:" >&2
+        echo "  sudo chown -R $CONTAINER_UID:$CONTAINER_UID $REPO_DIR/data" >&2
+        exit 1
+    fi
+fi
+
 
 # --- build + run ----------------------------------------------------------
 echo "==> Building and starting (docker compose up -d --build)..."

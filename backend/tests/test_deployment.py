@@ -90,3 +90,24 @@ def test_async_engine_can_be_constructed():
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     assert engine is not None
+
+
+def test_bootstrap_chowns_data_to_the_container_uid():
+    """The bind mount keeps host ownership, overriding the Dockerfile chown.
+
+    If the uid in the Dockerfile and the one bootstrap.sh chowns to ever drift
+    apart, the container cannot write its SQLite file and dies at startup with
+    "unable to open database file".
+    """
+    import re
+
+    dockerfile = (REPO_ROOT / "backend" / "Dockerfile").read_text()
+    match = re.search(r"--uid\s+(\d+)", dockerfile)
+    assert match, "Dockerfile must create its runtime user with an explicit --uid"
+    uid = match.group(1)
+
+    bootstrap = (REPO_ROOT / "deploy" / "bootstrap.sh").read_text()
+    assert f"CONTAINER_UID={uid}" in bootstrap, (
+        f"bootstrap.sh must chown data/ to uid {uid} to match the Dockerfile"
+    )
+    assert "chown" in bootstrap and "data" in bootstrap
