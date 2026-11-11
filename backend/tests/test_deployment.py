@@ -279,3 +279,20 @@ def test_enable_public_is_rerunnable_while_the_stack_is_up():
     script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
     assert "ps -q caddy" in script, "must recognise its own container"
     assert "OURS_RUNNING" in script
+
+
+def test_enable_public_has_a_dry_run_mode():
+    """`bash -n` passed on a $RESOLVED-before-assignment bug that `set -u`
+    aborts on at runtime. Only running the script catches that class."""
+    script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
+    assert 'DRY_RUN="${DRY_RUN:-}"' in script
+    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    assert "DRY_RUN=1" in ci, "CI must actually run the script, not just parse it"
+
+
+def test_enable_public_resolves_before_deciding_tls_mode():
+    """Ordering guard: the TLS decision depends on the DNS lookup."""
+    script = (REPO_ROOT / "deploy" / "enable-public.sh").read_text()
+    assigned = script.index('RESOLVED="$(getent hosts')
+    used = script.index('if [ -z "$RESOLVED" ]; then')
+    assert assigned < used, "RESOLVED is read before it is assigned"

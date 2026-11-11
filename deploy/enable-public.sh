@@ -22,9 +22,17 @@ cd "$REPO_DIR"
 CADDY_ENV=deploy/caddy.env
 CADDY_IMAGE=caddy:2.8-alpine
 
+# DRY_RUN exercises every prompt and decision without touching docker, the
+# network or this host. CI runs it both ways so a logic or ordering bug - like
+# reading a variable before it is assigned, which `bash -n` cannot catch -
+# fails on the pull request instead of on a server.
+DRY_RUN="${DRY_RUN:-}"
+
 [ -f backend/.env ] || { echo "ERROR: backend/.env not found. Run deploy/bootstrap.sh first." >&2; exit 1; }
 
-if docker compose version >/dev/null 2>&1; then
+if [ -n "$DRY_RUN" ]; then
+    COMPOSE="echo [dry-run] compose"
+elif docker compose version >/dev/null 2>&1; then
     COMPOSE="docker compose"
 elif command -v docker-compose >/dev/null 2>&1; then
     COMPOSE="docker-compose"
@@ -36,8 +44,12 @@ get_env() { [ -f "$CADDY_ENV" ] && grep "^$1=" "$CADDY_ENV" 2>/dev/null | head -
 
 # --- hostname -------------------------------------------------------------
 echo "==> Determining this server's public IP..."
-IP="$(curl -4 -fsS --max-time 10 https://api.ipify.org 2>/dev/null \
-   || curl -4 -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true)"
+if [ -n "$DRY_RUN" ]; then
+    IP="${FAKE_PUBLIC_IP:-203.0.113.10}"
+else
+    IP="$(curl -4 -fsS --max-time 10 https://api.ipify.org 2>/dev/null \
+       || curl -4 -fsS --max-time 10 https://ifconfig.me 2>/dev/null || true)"
+fi
 if [ -z "$IP" ]; then
     read -r -p "Could not detect it. Enter the server's public IPv4: " IP
 fi
@@ -56,6 +68,20 @@ if [ -z "$HOST" ]; then
     echo "    If you own a domain, point an A record at $IP and enter it instead."
     read -r -p "Public hostname [$DEFAULT_HOST]: " input
     HOST="${input:-$DEFAULT_HOST}"
+fi
+
+# --- resolve the hostname -------------------------------------------------
+# Must happen before the TLS decision below, which depends on whether this
+# name points straight at us or at something in front of us.
+echo "==> Checking DNS for $HOST..."
+RESOLVED="$(getent hosts "$HOST" 2>/dev/null | awk '{print $1}' | head -1 || true)"
+if [ -z "$RESOLVED" ]; then
+    echo "    WARNING: $HOST does not resolve yet." >&2
+elif [ "$RESOLVED" = "$IP" ]; then
+    echo "    resolves straight to this server ($RESOLVED)"
+else
+    echo "    resolves to $RESOLVED, which is NOT this server ($IP)"
+    echo "    -> something (a CDN/proxy such as Cloudflare) sits in front."
 fi
 
 # --- ACME email -----------------------------------------------------------
@@ -79,7 +105,11 @@ if [ -z "$USER_NAME" ] || [ -z "$HASH" ]; then
     [ "$PASS" = "$PASS2" ] || { echo "ERROR: passwords do not match." >&2; exit 1; }
     [ ${#PASS} -ge 12 ] || { echo "ERROR: use at least 12 characters." >&2; exit 1; }
     echo "==> Hashing with bcrypt..."
-    HASH="$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$PASS")"
+    if [ -n "$DRY_RUN" ]; then
+        HASH='$2a$14$dryrunDryrunDryrunDryrunDryrunDryrunDryrunDryrunDryrun'
+    else
+        HASH="$(docker run --rm "$CADDY_IMAGE" caddy hash-password --plaintext "$PASS")"
+    fi
     unset PASS PASS2
 fi
 
@@ -88,7 +118,15 @@ fi
 # a CDN proxies the hostname that is impossible without changing the CDN, so we
 # serve Caddy's own certificate instead: the CDN terminates TLS for visitors and
 # only has to accept this origin, which its "Full" mode does.
-if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$IP" ]; then
+if [ -z "$RESOLVED" ]; then
+    # Not the same as "no proxy": we simply do not know. Public issuance is
+    # the right default, but say plainly that it will fail until DNS exists.
+    DEFAULT_TLS="$EMAIL"
+    echo
+    echo "==> $HOST does not resolve, so a proxy cannot be detected."
+    echo "    Defaulting to a public certificate (TLS_ARG=<email>), which will"
+    echo "    fail until DNS points at this server. Add the record, then re-run."
+elif [ "$RESOLVED" != "$IP" ]; then
     DEFAULT_TLS="internal"
     echo
     echo "==> A proxy/CDN sits in front of $HOST."
@@ -98,7 +136,9 @@ if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$IP" ]; then
     echo "    will need either CDN access or an origin certificate from it."
 else
     DEFAULT_TLS="$EMAIL"
-    echo "==> No proxy detected; Caddy will obtain a public certificate."
+    echo
+    echo "==> $HOST points straight at this server; Caddy will obtain a"
+    echo "    public certificate."
 fi
 
 EXISTING_TLS="$(get_env TLS_ARG)"
@@ -137,6 +177,13 @@ chmod 600 "$CADDY_ENV"
 echo "==> Wrote $CADDY_ENV"
 
 # --- preflight ------------------------------------------------------------
+if [ -n "$DRY_RUN" ]; then
+    echo
+    echo "==> DRY RUN complete. $CADDY_ENV would contain:"
+    sed 's/^/    /' "$CADDY_ENV"
+    exit 0
+fi
+
 echo "==> Validating the Caddy config..."
 if ! docker run --rm --env-file "$CADDY_ENV" \
         -v "$REPO_DIR/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
@@ -174,17 +221,6 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: a
     echo "==> Opening 80/443 in ufw..."
     sudo ufw allow 80/tcp  >/dev/null 2>&1 || true
     sudo ufw allow 443/tcp >/dev/null 2>&1 || true
-fi
-
-echo "==> Checking DNS for $HOST..."
-RESOLVED="$(getent hosts "$HOST" 2>/dev/null | awk '{print $1}' | head -1 || true)"
-if [ -z "$RESOLVED" ]; then
-    echo "    WARNING: $HOST does not resolve yet." >&2
-elif [ "$RESOLVED" = "$IP" ]; then
-    echo "    resolves straight to this server ($RESOLVED)"
-else
-    echo "    resolves to $RESOLVED, which is NOT this server ($IP)"
-    echo "    -> something (a CDN/proxy such as Cloudflare) sits in front."
 fi
 
 # --- start ----------------------------------------------------------------
